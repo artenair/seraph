@@ -1,0 +1,44 @@
+import { useState, useEffect } from 'react';
+
+const DB_NAME  = 'seraph-local';
+const STORE    = 'kv';
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(STORE);
+    req.onsuccess  = e => resolve(e.target.result);
+    req.onerror    = e => reject(e.target.error);
+  });
+}
+
+function dbGet(key) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(key);
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
+  }));
+}
+
+function dbPut(key, value) {
+  return openDB().then(db => new Promise((resolve, reject) => {
+    const req = db.transaction(STORE, 'readwrite').objectStore(STORE).put(value, key);
+    req.onsuccess = () => resolve();
+    req.onerror   = e => reject(e.target.error);
+  }));
+}
+
+export function useLocalStore(key, defaultValue) {
+  const [value, setValue] = useState(defaultValue);
+
+  useEffect(() => {
+    dbGet(key).then(v => { if (v !== undefined) setValue(v); });
+  }, [key]);
+
+  function set(newValue) {
+    setValue(newValue);
+    dbPut(key, newValue);
+  }
+
+  return [value, set];
+}
