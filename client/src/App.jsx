@@ -16,6 +16,8 @@ import { PersonalNowPlaying } from './components/PersonalNowPlaying.jsx';
 import { PlaylistImportBar } from './components/PlaylistImportBar.jsx';
 import { Button } from '@/components/ui/button';
 import { isLocal } from './lib/utils.js';
+import { useAuth } from './context/AuthContext.jsx';
+import { LoginPage } from './components/LoginPage.jsx';
 
 function ActionTabWrapper() {
   const { drawerOpen } = useAudio();
@@ -23,12 +25,16 @@ function ActionTabWrapper() {
 }
 
 export default function App() {
+  const { user, loading, logout } = useAuth();
   const [site,      setSite]      = useState(null);
   const [exorcists, setExorcists] = useState([]);
   const [missions,  setMissions]  = useState([]);
   const [tab,       setTab]       = useState('action');
   const [panel,     setPanel]     = useState(null); // { type, id }
   const [formOpen,  setFormOpen]  = useState(false);
+
+  if (loading) return null;
+  if (!user)   return <LoginPage />;
 
   useEffect(() => {
     fetchSite().then(setSite);
@@ -61,9 +67,15 @@ export default function App() {
           </TabsList>
         </Tabs>
         {isLocal && tab === 'exorcists' && (
-          <Button size="sm" className="ml-auto" onClick={() => setFormOpen(true)}>+ New</Button>
+          <Button size="sm" onClick={() => setFormOpen(true)}>+ New</Button>
         )}
 
+        <div className="ml-auto flex items-center gap-3">
+          {user.photoURL && (
+            <img src={user.photoURL} alt={user.displayName} className="size-7 rounded-full" />
+          )}
+          <Button variant="ghost" size="sm" onClick={logout}>Sign out</Button>
+        </div>
       </header>
 
       <main className="flex-1 overflow-auto p-6 min-h-0">
