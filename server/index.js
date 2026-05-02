@@ -274,6 +274,6 @@ app.get('/auth/discord/callback', async (req, res) => {
 
 // -- Start
 
-server.listen(port, () => {
+server.listen(port, '0.0.0.0', () => {
   console.log(`server: http://localhost:${port}`);
 });
