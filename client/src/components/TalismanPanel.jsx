@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { isLocal, getLocalStorage, inputBase } from '../lib/utils.js';
+import { getLocalStorage, inputBase } from '../lib/utils.js';
+import { useRoom } from '../context/RoomContext.jsx';
+import { createRoomTalisman, updateRoomTalisman, deleteRoomTalisman } from '../api.js';
 import { Button } from '@/components/ui/button';
 import { Eye, EyeOff, Copy, ChevronDown, Pin, PinOff } from 'lucide-react';
 
@@ -188,6 +190,7 @@ function TalismanCard({ talisman, onSetSlashes, onSetTotal, onDelete, onRename, 
 }
 
 export function TalismanPanel({ talismans }) {
+  const { isAdmin, currentRoom } = useRoom();
   const [name,         setName]         = useState('');
   const [totalSlashes, setTotalSlashes] = useState(4);
   const [creating,     setCreating]     = useState(false);
@@ -235,69 +238,43 @@ export function TalismanPanel({ talismans }) {
     if (!name.trim()) return;
     setCreating(true);
     try {
-      await fetch('/api/talismans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), totalSlashes, hidden: startHidden }),
-      });
+      await createRoomTalisman(currentRoom.id, { name: name.trim(), totalSlashes, hidden: startHidden });
       setName('');
     } finally {
       setCreating(false);
     }
   }
 
+  function getTalisman(id) { return talismans.find(t => t.id === id); }
+
   async function handleSetSlashes(id, slashes) {
-    await fetch(`/api/talismans/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slashes }),
-    });
+    await updateRoomTalisman(currentRoom.id, getTalisman(id), { slashes });
   }
 
   async function handleRename(id, name) {
-    await fetch(`/api/talismans/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    });
+    await updateRoomTalisman(currentRoom.id, getTalisman(id), { name });
   }
 
-  async function handleSetTotal(id, totalSlashes) {
-    await fetch(`/api/talismans/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ total_slashes: totalSlashes }),
-    });
+  async function handleSetTotal(id, total_slashes) {
+    await updateRoomTalisman(currentRoom.id, getTalisman(id), { total_slashes });
   }
 
   async function handleTogglePinned(id, pinned) {
-    await fetch(`/api/talismans/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pinned: !pinned }),
-    });
+    await updateRoomTalisman(currentRoom.id, getTalisman(id), { pinned: !pinned });
   }
 
   async function handleToggleHidden(id, hidden) {
-    await fetch(`/api/talismans/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hidden: !hidden }),
-    });
+    await updateRoomTalisman(currentRoom.id, getTalisman(id), { hidden: !hidden });
   }
 
   async function handleDelete(id) {
-    await fetch(`/api/talismans/${id}`, { method: 'DELETE' });
+    await deleteRoomTalisman(currentRoom.id, id);
   }
 
   async function handleDuplicateConfirm(name) {
     const src = duplicating;
     setDuplicating(null);
-    await fetch('/api/talismans', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, totalSlashes: src.total_slashes, hidden: src.hidden }),
-    });
+    await createRoomTalisman(currentRoom.id, { name, totalSlashes: src.total_slashes, hidden: src.hidden });
   }
 
   return (
@@ -317,7 +294,7 @@ export function TalismanPanel({ talismans }) {
         )}
       </div>
 
-      {isLocal && (
+      {isAdmin && (
         <div className="flex gap-3 items-end mb-6">
           <div className="flex-1">
             <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground mb-1">Name</p>
@@ -346,16 +323,16 @@ export function TalismanPanel({ talismans }) {
 
       <div className="flex flex-col gap-2">
         {ordered.filter(t => {
-          if (!isLocal && t.hidden) return false;
+          if (!isAdmin && t.hidden) return false;
           if (t.pinned) return true;
           if (filter && !t.name.toLowerCase().includes(filter.toLowerCase())) return false;
           if (selectedTags.length > 0 && !selectedTags.some(tag => extractTags(t.name).includes(tag))) return false;
           return true;
-        }).map(t => (
+        }).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)).map(t => (
           <TalismanCard
             key={t.id}
             talisman={t}
-            isLocal={isLocal}
+            isLocal={isAdmin}
             dragging={dragId.current === t.id}
             onDragStart={() => { dragId.current = t.id; }}
             onDragOver={() => { if (dragId.current && dragId.current !== t.id) handleDrop(t.id); }}

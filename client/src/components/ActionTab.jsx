@@ -5,9 +5,15 @@ import { Button } from '@/components/ui/button';
 import { TalismanPanel } from './TalismanPanel.jsx';
 import { AudioMap } from './AudioMap.jsx';
 import { useAudio } from '../context/AudioContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import { Map, Volume2, VolumeX } from 'lucide-react';
-import { isLocal, inputBase } from '../lib/utils.js';
-import { useWebSocket } from '../lib/useWebSocket.js';
+import { inputBase } from '../lib/utils.js';
+import { useRoom } from '../context/RoomContext.jsx';
+import { computeRoll, computeCustomRoll } from '../lib/dice.js';
+import { collection, addDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { ref as rtdbRef, set, onValue } from 'firebase/database';
+import { db, rtdb } from '../lib/firebase.js';
+import { fetchRoomTalismans } from '../api.js';
 
 const STATS = [
   'force', 'conditioning', 'coordination', 'covert', 'interfacing',
@@ -72,7 +78,7 @@ function RollEntry({ roll }) {
         {roll.hard      && <span className="text-[0.6rem] uppercase tracking-wide text-yellow-400 border border-yellow-400/40 px-1.5 py-0.5">hard</span>}
         {roll.risky     && <span className="text-[0.6rem] uppercase tracking-wide text-orange-400 border border-orange-400/40 px-1.5 py-0.5">risky</span>}
         {roll.divineAgony && <span className="text-[0.6rem] uppercase tracking-wide text-purple-400 border border-purple-400/40 px-1.5 py-0.5">divine agony</span>}
-        <span className="text-muted-foreground/50 ml-auto">{new Date(roll.created_at).toLocaleTimeString()}</span>
+        <span className="text-muted-foreground/50 ml-auto">{new Date(roll.createdAt ?? roll.created_at).toLocaleTimeString()}</span>
       </div>
       <div className="flex items-center gap-1.5 flex-wrap mb-2">
         {isCustom ? (
@@ -111,33 +117,64 @@ function RollEntry({ roll }) {
 }
 
 function useFeed() {
+  const { currentRoom } = useRoom();
   const [rolls,     setRolls]     = useState([]);
   const [talismans, setTalismans] = useState([]);
 
+  // Initial roll load from Firestore
   useEffect(() => {
-    fetch('/api/rolls').then(r => r.json()).then(setRolls);
-    fetch('/api/talismans').then(r => r.json()).then(setTalismans);
-  }, []);
+    if (!currentRoom?.id) return;
+    getDocs(query(
+      collection(db, 'rooms', currentRoom.id, 'rolls'),
+      orderBy('createdAt', 'desc'),
+      limit(50),
+    )).then(snap => setRolls(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+  }, [currentRoom?.id]);
 
-  useWebSocket(msg => {
-    if (msg.type === 'history')          setRolls(msg.rolls);
-    if (msg.type === 'roll')             setRolls(prev => [msg.roll, ...prev].slice(0, 50));
-    if (msg.type === 'talismans')        setTalismans(msg.talismans);
-    if (msg.type === 'talisman_created') setTalismans(prev => [...prev, msg.talisman]);
-    if (msg.type === 'talisman_updated') setTalismans(prev => prev.map(t => t.id === msg.talisman.id ? msg.talisman : t));
-    if (msg.type === 'talisman_deleted') setTalismans(prev => prev.filter(t => t.id !== msg.id));
-  });
+  // Real-time roll updates via RTDB
+  useEffect(() => {
+    if (!currentRoom?.id) return;
+    const firstCall = { seen: false };
+    const unsub = onValue(rtdbRef(rtdb, `rooms/${currentRoom.id}/rollEvent`), snapshot => {
+      if (!firstCall.seen) { firstCall.seen = true; return; }
+      const event = snapshot.val();
+      if (event?.roll) setRolls(prev => [event.roll, ...prev].slice(0, 50));
+    });
+    return unsub;
+  }, [currentRoom?.id]);
+
+  // Initial talisman load from Firestore
+  useEffect(() => {
+    if (!currentRoom?.id) return;
+    fetchRoomTalismans(currentRoom.id).then(setTalismans);
+  }, [currentRoom?.id]);
+
+  // Real-time talisman updates via RTDB
+  useEffect(() => {
+    if (!currentRoom?.id) return;
+    const firstCall = { seen: false };
+    const unsub = onValue(rtdbRef(rtdb, `rooms/${currentRoom.id}/talismanEvent`), snapshot => {
+      if (!firstCall.seen) { firstCall.seen = true; return; }
+      const event = snapshot.val();
+      if (!event) return;
+      if (event.type === 'talisman_created') setTalismans(prev => [...prev, event.talisman]);
+      if (event.type === 'talisman_updated') setTalismans(prev => prev.map(t => t.id === event.talisman.id ? event.talisman : t));
+      if (event.type === 'talisman_deleted') setTalismans(prev => prev.filter(t => t.id !== event.talismanId));
+    });
+    return unsub;
+  }, [currentRoom?.id]);
 
   return { rolls, talismans };
 }
 
 export function ActionTab({ drawerOpen = false }) {
   const [showMap, setShowMap] = useState(false);
+  const { isAdmin, isDJ, currentRoom } = useRoom();
   const { clientMuted, toggleClientMute } = useAudio();
 
-  const [stats,    setStats]    = useLocalStore('stats',    DEFAULT_STATS);
-  const [pathos,   setPathos]   = useLocalStore('pathos',   0);
-  const [username, setUsername] = useLocalStore('username', '');
+  const { displayName: username } = useAuth();
+  const [stats,  setStats]  = useLocalStore('stats',  DEFAULT_STATS);
+  const [pathos, setPathos] = useLocalStore('pathos', 0);
 
   const [selectedStat, setSelectedStat] = useState('force');
   const [bonus,        setBonus]        = useState(0);
@@ -161,15 +198,31 @@ export function ActionTab({ drawerOpen = false }) {
     setStats({ ...stats, [stat]: val });
   }
 
+  async function saveRoll(rollData) {
+    const ref  = await addDoc(collection(db, 'rooms', currentRoom.id, 'rolls'), rollData);
+    const roll = { id: ref.id, ...rollData };
+    await set(rtdbRef(rtdb, `rooms/${currentRoom.id}/rollEvent`), { roll, ts: Date.now() });
+    return roll;
+  }
+
   async function handleRoll() {
     setRolling(true);
     try {
-      const res = await fetch('/api/rolls', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stat: selectedStat, statValue, bonus, hard, risky, divineAgony, pathos, username }),
+      const r    = computeRoll({ statValue, bonus, hard, risky, divineAgony, pathos });
+      const roll = await saveRoll({
+        createdAt:  Date.now(),
+        username,
+        stat:       selectedStat,
+        statValue, bonus, hard, risky, divineAgony,
+        pathosSent: divineAgony ? pathos : 0,
+        dice:       r.mainDice,
+        zeroDice:   r.zeroDice ?? null,
+        riskDie:    r.riskDie ?? null,
+        riskLabel:  r.riskLabel ?? null,
+        success:    r.success,
+        poolSize:   r.finalPool,
+        threshold:  r.threshold,
       });
-      const roll = await res.json();
 
       if (divineAgony) {
         setPathos(0);
@@ -185,10 +238,14 @@ export function ActionTab({ drawerOpen = false }) {
   async function handleCustomRoll() {
     setRollingCustom(true);
     try {
-      await fetch('/api/rolls', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ d6: d6Count, d3: d3Count, username }),
+      const c = computeCustomRoll({ d6Count, d3Count });
+      await saveRoll({
+        createdAt: Date.now(),
+        username,
+        stat:      null,
+        d6Dice:    c.d6Dice,
+        d3Dice:    c.d3Dice,
+        poolSize:  c.finalPool,
       });
     } finally {
       setRollingCustom(false);
@@ -237,18 +294,6 @@ export function ActionTab({ drawerOpen = false }) {
 
       {/* Right sidebar */}
       <div className="w-[480px] shrink-0 border-l border-border pl-6">
-
-        {/* Username */}
-        <div className="flex items-center gap-3 mb-4">
-          <span className="text-xs uppercase tracking-widest text-muted-foreground w-14">Name</span>
-          <input
-            type="text"
-            value={username}
-            onChange={e => setUsername(e.target.value)}
-            placeholder="Your name…"
-            className={`${input} px-2.5 py-1.5 flex-1`}
-          />
-        </div>
 
         {/* Pathos */}
         <div className="flex items-center gap-3 mb-6">
@@ -350,7 +395,7 @@ export function ActionTab({ drawerOpen = false }) {
 
       </div>
     </div>
-    {isLocal && !drawerOpen && (
+    {isAdmin && !drawerOpen && (
       <button
         onClick={() => setShowMap(true)}
         title="Audio Map"
@@ -358,7 +403,7 @@ export function ActionTab({ drawerOpen = false }) {
         <Map size={18} />
       </button>
     )}
-    {!isLocal && (
+    {!isDJ && (
       <button
         onClick={toggleClientMute}
         className="fixed bottom-16 left-4 z-50 flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 active:scale-95 transition-all shadow-lg">

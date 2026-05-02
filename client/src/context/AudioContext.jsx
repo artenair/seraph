@@ -1,7 +1,9 @@
 import { createContext, useContext, useRef, useState, useEffect } from 'react';
-import { fetchAudioZones, fetchSongs } from '../api.js';
-import { isLocal, getLocalStorage, zonePlaylist, extractYtId } from '../lib/utils.js';
-import { useWebSocket } from '../lib/useWebSocket.js';
+import { fetchRoomZones, fetchRoomSongs } from '../api.js';
+import { getLocalStorage, zonePlaylist, extractYtId } from '../lib/utils.js';
+import { ref as rtdbRef, set, get, remove, onValue } from 'firebase/database';
+import { rtdb } from '../lib/firebase.js';
+import { useRoom } from './RoomContext.jsx';
 
 const CROSSFADE = 10; // seconds
 
@@ -22,17 +24,34 @@ export function AudioProvider({ children }) {
   const sessionRef      = useRef(null);  // { zone, songs, index }
   const pollRef         = useRef(null);
 
-  const suppressRef     = useRef(false);
-  const loopRef         = useRef(false);
-  const shuffleRef      = useRef(false);
-  const unlockedRef     = useRef(false);
-  const zoneMemoryRef   = useRef(getLocalStorage('audiomap-zone-memory', {}));
-  const isLocalRef      = useRef(isLocal);
-  const isPlayingRef    = useRef(false);
-  const volumeRef       = useRef(1);
+  const { isDJ, currentRoom } = useRoom();
 
-  const [clientMuted,    setClientMuted]    = useState(!isLocal);
-  const clientMutedRef  = useRef(!isLocal);
+  const suppressRef        = useRef(false);
+  const loopRef            = useRef(false);
+  const shuffleRef         = useRef(false);
+  const unlockedRef        = useRef(false);
+  const zoneMemoryRef      = useRef(getLocalStorage('audiomap-zone-memory', {}));
+  const isDJRef            = useRef(false);
+  const currentRoomRef     = useRef(currentRoom);
+  const isPlayingRef       = useRef(false);
+  const volumeRef          = useRef(1);
+  const hasAutoUnmutedRef  = useRef(false);
+
+  const [clientMuted,    setClientMuted]    = useState(true);
+  const clientMutedRef  = useRef(true);
+
+  // Keep refs in sync
+  useEffect(() => { currentRoomRef.current = currentRoom; }, [currentRoom]);
+
+  // Update isDJRef and auto-unmute DJ on first role load
+  useEffect(() => {
+    isDJRef.current = isDJ;
+    if (isDJ && !hasAutoUnmutedRef.current) {
+      hasAutoUnmutedRef.current = true;
+      setClientMuted(false);
+      clientMutedRef.current = false;
+    }
+  }, [isDJ]);
   const [currentSong,    setCurrentSong]    = useState(null);
   const [activeZoneId,   setActiveZoneId]   = useState(null);
   const [activeZoneName, setActiveZoneName] = useState(null);
@@ -172,7 +191,7 @@ export function AudioProvider({ children }) {
     if (event.data === 0 /* ENDED */) {
       if (crossfadeRef.current) return;
       const s = sessionRef.current;
-      if (!s || !isLocalRef.current) return;
+      if (!s || !isDJRef.current) return;
       if (loopRef.current) { playTrack(s.zone, s.songs, s.index); return; }
       const pl  = zonePlaylist(s.zone);
       const len = Math.max(1, pl.length);
@@ -291,7 +310,7 @@ export function AudioProvider({ children }) {
 
     crossfadeRef.current = { nextIndex, interval: intervalId };
 
-    if (isLocalRef.current && !suppressRef.current) {
+    if (isDJRef.current && !suppressRef.current) {
       sendCmd({ action: 'play_at', index: nextIndex, zone_id: s.zone.id, time: 0, crossfade: true });
     }
   }
@@ -329,37 +348,27 @@ export function AudioProvider({ children }) {
     if (!remote && !suppressRef.current) sendCmd({ action: 'seek', time });
   }
 
-  // ── WebSocket ──────────────────────────────────────────────────────────────────
+  // ── RTDB audio commands ────────────────────────────────────────────────────────
 
-  const sendWs = useWebSocket(msg => {
-    if (msg.type !== 'audio_command') return;
+  function handleAudioCmd(msg) {
+    if (!msg) return;
     suppressRef.current = true;
-    if (clientMutedRef.current && msg.action !== 'request_state') {
-      suppressRef.current = false;
-      return;
-    }
+    if (clientMutedRef.current) { suppressRef.current = false; return; }
+
     if (msg.action === 'play') {
       tryPlay(); startPolling(); setIsPlaying(true);
-      if (!clientMutedRef.current) window.dispatchEvent(new Event('server-playing'));
+      window.dispatchEvent(new Event('server-playing'));
     } else if (msg.action === 'pause') {
       stopPolling();
       try { getActivePlayer()?.pauseVideo(); } catch {}
       setIsPlaying(false);
     } else if (msg.action === 'seek') {
       seek(msg.time, true);
-    } else if (msg.action === 'request_state') {
-      if (isLocalRef.current) {
-        const s = sessionRef.current;
-        if (s && isPlayingRef.current) {
-          const ct = (() => { try { return getActivePlayer()?.getCurrentTime() ?? 0; } catch { return 0; } })();
-          sendCmd({ action: 'play_at', index: s.index, zone_id: s.zone.id, time: ct });
-        }
-      }
     } else if (msg.action === 'play_at') {
       if (msg.crossfade) { suppressRef.current = false; return; }
-      if (!clientMutedRef.current) window.dispatchEvent(new Event('server-playing'));
+      window.dispatchEvent(new Event('server-playing'));
       if (msg.zone_id && sessionRef.current?.zone.id !== msg.zone_id) {
-        Promise.all([fetchAudioZones(), fetchSongs().then(ss => ss.filter(s => s.status === 'done'))])
+        Promise.all([fetchRoomZones(currentRoomRef.current?.id ?? ''), fetchRoomSongs(currentRoomRef.current?.id ?? '').then(ss => ss.filter(s => s.status === 'done'))])
           .then(([zones, songs]) => {
             const zone = zones.find(z => z.id === msg.zone_id);
             if (zone) playTrack(zone, songs, msg.index, msg.time ?? 0);
@@ -369,9 +378,40 @@ export function AudioProvider({ children }) {
       }
     }
     suppressRef.current = false;
-  });
+  }
 
-  function sendCmd(payload) { sendWs({ type: 'audio_command', ...payload }); }
+  // Listen to live audio commands (play, pause, seek, track changes)
+  useEffect(() => {
+    if (!currentRoom?.id) return;
+    const firstCall = { seen: false };
+    const cmdRef    = rtdbRef(rtdb, `rooms/${currentRoom.id}/audioCommand`);
+    const unsub     = onValue(cmdRef, snapshot => {
+      const msg = snapshot.val();
+      if (!firstCall.seen) { firstCall.seen = true; if (isDJRef.current) return; }
+      handleAudioCmd(msg);
+    });
+    return unsub;
+  }, [currentRoom?.id]);
+
+  // Write live commands (for all active clients)
+  function sendCmd(payload) {
+    const roomId = currentRoomRef.current?.id;
+    if (!roomId) return;
+    set(rtdbRef(rtdb, `rooms/${roomId}/audioCommand`), payload);
+    if (payload.action === 'play_at') sendState();
+  }
+
+  // Write current position to audioState (for clients joining/unmuting)
+  function sendState() {
+    const roomId = currentRoomRef.current?.id;
+    if (!roomId || !isDJRef.current || !isPlayingRef.current) return;
+    const s = sessionRef.current;
+    if (!s) return;
+    const ct = (() => { try { return getActivePlayer()?.getCurrentTime() ?? 0; } catch { return 0; } })();
+    set(rtdbRef(rtdb, `rooms/${roomId}/audioState`), {
+      zone_id: s.zone.id, index: s.index, time: ct, sentAt: Date.now(),
+    });
+  }
 
   // ── Playback ───────────────────────────────────────────────────────────────────
 
@@ -464,6 +504,12 @@ export function AudioProvider({ children }) {
     setActiveZoneId(null);
     setActiveZoneName(null);
     setIsPlaying(false);
+
+    if (isDJRef.current && currentRoomRef.current?.id) {
+      const roomId = currentRoomRef.current.id;
+      remove(rtdbRef(rtdb, `rooms/${roomId}/audioCommand`));
+      remove(rtdbRef(rtdb, `rooms/${roomId}/audioState`));
+    }
   }
 
   function togglePlay() {
@@ -518,9 +564,10 @@ export function AudioProvider({ children }) {
 
   // On mount: preload zone under the persisted listener position
   useEffect(() => {
+    if (!currentRoom?.id) return;
     Promise.all([
-      fetchAudioZones(),
-      fetchSongs().then(ss => ss.filter(s => s.status === 'done')),
+      fetchRoomZones(currentRoom.id),
+      fetchRoomSongs(currentRoom.id).then(ss => ss.filter(s => s.status === 'done')),
     ]).then(([zones, songs]) => {
       const init = () => {
         try {
@@ -535,18 +582,19 @@ export function AudioProvider({ children }) {
       if (ytReadyRef.current) init();
       else pendingInitRef.current = init;
     });
-  }, []);
+  }, [currentRoom?.id]);
 
-  // Periodic session position save
+  // Periodic session position save + DJ state heartbeat
   useEffect(() => {
     const id = setInterval(() => {
       const s = sessionRef.current;
-      if (!s || !isLocalRef.current) return;
+      if (!s || !isDJRef.current) return;
       try {
         const ct = getActivePlayer()?.getCurrentTime() ?? 0;
         zoneMemoryRef.current[s.zone.id] = { index: s.index, time: ct };
         localStorage.setItem('audiomap-zone-memory', JSON.stringify(zoneMemoryRef.current));
       } catch {}
+      sendState();
     }, 5000);
     return () => clearInterval(id);
   }, []);
@@ -558,15 +606,36 @@ export function AudioProvider({ children }) {
     setActiveZoneId(null);
     setActiveZoneName(null);
     playTrack(zone, songs, idx < 0 ? 0 : idx);
-    if (isLocalRef.current) sendCmd({ action: 'play_at', index: idx < 0 ? 0 : idx, zone_id: null, time: 0 });
+    if (isDJRef.current) sendCmd({ action: 'play_at', index: idx < 0 ? 0 : idx, zone_id: null, time: 0 });
   }
 
   function toggleClientMute() {
     if (clientMuted) {
       setClientMuted(false);
-      sendCmd({ action: 'request_state' });
+      clientMutedRef.current = false;
+      // Sync from DJ's latest position
+      const roomId = currentRoomRef.current?.id;
+      if (roomId) {
+        get(rtdbRef(rtdb, `rooms/${roomId}/audioState`)).then(snapshot => {
+          const state = snapshot.val();
+          if (!state) return;
+          const elapsed      = state.sentAt ? (Date.now() - state.sentAt) / 1000 : 0;
+          const { zone_id, index, time } = state;
+          Promise.all([
+            fetchRoomZones(currentRoomRef.current?.id ?? ''),
+            fetchRoomSongs(currentRoomRef.current?.id ?? '').then(ss => ss.filter(s => s.status === 'done')),
+          ]).then(([zones, songs]) => {
+            // Recalculate elapsed after fetch to stay accurate
+            const totalElapsed  = state.sentAt ? (Date.now() - state.sentAt) / 1000 : elapsed;
+            const adjustedTime  = Math.max(0, time + totalElapsed);
+            const zone = zone_id ? zones.find(z => z.id === zone_id) : null;
+            if (zone) playTrack(zone, songs, index, adjustedTime);
+          });
+        });
+      }
     } else {
       setClientMuted(true);
+      clientMutedRef.current = true;
       stopAudio();
     }
   }

@@ -1,10 +1,11 @@
 import { useAudio } from '../context/AudioContext.jsx';
-import { isLocal } from '../lib/utils.js';
+import { useRoom } from '../context/RoomContext.jsx';
 import { PlayerBar } from './PlayerBar.jsx';
 import { SongThumbnail } from './SongThumbnail.jsx';
 import { SkipBack, SkipForward, Play, Pause, Repeat, Shuffle, ListMusic, X } from 'lucide-react';
 
 export function NowPlaying() {
+  const { isDJ } = useRoom();
   const {
     currentSong, activeZoneName, isPlaying, togglePlay, nextTrack, prevTrack,
     currentTime, duration, seek,
@@ -24,9 +25,9 @@ export function NowPlaying() {
       {playlistSongs.map((song, i) => (
         <button
           key={song.id}
-          onClick={() => { if (isLocal) playAt(i); }}
+          onClick={() => { if (isDJ) playAt(i); }}
           className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors
-            ${isLocal ? 'hover:bg-muted/50 cursor-pointer' : 'cursor-default'}
+            ${isDJ ? 'hover:bg-muted/50 cursor-pointer' : 'cursor-default'}
             ${i === currentIndex ? 'bg-muted/40' : ''}`}
         >
           <SongThumbnail song={song} className="w-7 h-7" />
@@ -42,7 +43,7 @@ export function NowPlaying() {
     </div>
   ) : null;
 
-  const center = isLocal ? (
+  const center = isDJ ? (
     <>
       <button onClick={prevTrack} className="p-1.5 text-muted-foreground hover:text-foreground transition-colors">
         <SkipBack size={15} />
@@ -65,7 +66,7 @@ export function NowPlaying() {
       >
         <ListMusic size={15} />
       </button>
-      {isLocal && <>
+      {isDJ && <>
         <button
           onClick={() => setLoop(v => !v)}
           title="Loop"
@@ -99,7 +100,7 @@ export function NowPlaying() {
       duration={duration}
       volume={volume}
       onVolumeChange={setVolume}
-      onSeek={isLocal ? seek : null}
+      onSeek={isDJ ? seek : null}
       subtitle={subtitle || undefined}
       center={center}
       right={right}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { fetchAudioZones, createAudioZone, updateAudioZone, deleteAudioZone, fetchSongs } from '../api.js';
+import { fetchRoomZones, createRoomZone, updateRoomZone, deleteRoomZone, fetchRoomSongs } from '../api.js';
 import { useAudio } from '../context/AudioContext.jsx';
+import { useRoom } from '../context/RoomContext.jsx';
 import { zonePlaylist, getLocalStorage, inputBase } from '../lib/utils.js';
 import { SongThumbnail } from './SongThumbnail.jsx';
 import { Trash2, X, Hand, Circle, GripVertical } from 'lucide-react';
@@ -45,6 +46,7 @@ function Toolbar({ mode, onModeChange }) {
 // ── Zone panel ─────────────────────────────────────────────────────────────────
 
 function ZonePanel({ zone, color, songs, onUpdate, onDelete }) {
+  const { currentRoom } = useRoom();
   const [name, setName] = useState(zone.name);
   const dragIndex = useRef(null);
 
@@ -56,17 +58,17 @@ function ZonePanel({ zone, color, songs, onUpdate, onDelete }) {
 
   async function saveName() {
     if (name.trim() === zone.name) return;
-    const updated = await updateAudioZone(zone.id, { name: name.trim() || zone.name });
+    const updated = await updateRoomZone(currentRoom.id, zone.id, { name: name.trim() || zone.name });
     onUpdate(updated);
   }
 
   async function addSong(songId) {
-    const updated = await updateAudioZone(zone.id, { playlist: [...playlist, songId] });
+    const updated = await updateRoomZone(currentRoom.id, zone.id, { playlist: [...playlist, songId] });
     onUpdate(updated);
   }
 
   async function removeSong(songId) {
-    const updated = await updateAudioZone(zone.id, { playlist: playlist.filter(id => id !== songId) });
+    const updated = await updateRoomZone(currentRoom.id, zone.id, { playlist: playlist.filter(id => id !== songId) });
     onUpdate(updated);
   }
 
@@ -74,7 +76,7 @@ function ZonePanel({ zone, color, songs, onUpdate, onDelete }) {
     if (fromIndex === toIndex) return;
     const next = [...playlist];
     next.splice(toIndex, 0, next.splice(fromIndex, 1)[0]);
-    const updated = await updateAudioZone(zone.id, { playlist: next });
+    const updated = await updateRoomZone(currentRoom.id, zone.id, { playlist: next });
     onUpdate(updated);
   }
 
@@ -268,6 +270,7 @@ export function AudioMap() {
   const [listener,       setListener]       = useState(() => getLocalStorage('audiomap-listener', { x: 200, y: 150 }));
   const [hoverListener,  setHoverListener]  = useState(false);
   const { playZone, stopAudio, activeZoneId } = useAudio();
+  const { currentRoom } = useRoom();
   const zonesRef       = useRef([]);
   const songsRef       = useRef([]);
   const panRef         = useRef({ x: 0, y: 0 });
@@ -307,9 +310,10 @@ export function AudioMap() {
   }, []);
 
   useEffect(() => {
-    fetchAudioZones().then(setZones);
-    fetchSongs().then(ss => setSongs(ss.filter(s => s.status === 'done')));
-  }, []);
+    if (!currentRoom?.id) return;
+    fetchRoomZones(currentRoom.id).then(setZones);
+    fetchRoomSongs(currentRoom.id).then(ss => setSongs(ss.filter(s => s.status === 'done')));
+  }, [currentRoom?.id]);
 
   useEffect(() => {
     if (canvasRef.current) drawCanvas(canvasRef.current, zones, selectedId, hoveredId, pan, zoom, size, listener, hoverListener, activeZoneId);
@@ -523,15 +527,15 @@ export function AudioMap() {
       const zone = zonesRef.current.find(z => z.id === ds.zoneId);
       if (!zone) return;
       if (ds.type === 'resize') {
-        await updateAudioZone(zone.id, { radius: zone.radius });
+        await updateRoomZone(currentRoom.id, zone.id, { radius: zone.radius });
       } else {
-        await updateAudioZone(zone.id, { x: zone.x, y: zone.y });
+        await updateRoomZone(currentRoom.id, zone.id, { x: zone.x, y: zone.y });
       }
     } else if (ds.type === 'move') {
       if (ds.zoneId !== null) {
         setSelectedId(prev => prev === ds.zoneId ? null : ds.zoneId);
       } else if (mode === 'circle') {
-        const zone = await createAudioZone({
+        const zone = await createRoomZone(currentRoom.id, {
           name: `Zone ${zonesRef.current.length + 1}`,
           x: pos.x, y: pos.y, radius: 60,
         });
@@ -587,7 +591,7 @@ export function AudioMap() {
             songs={songs}
             onUpdate={updated => setZones(prev => prev.map(z => z.id === updated.id ? updated : z))}
             onDelete={async () => {
-              await deleteAudioZone(selectedZone.id);
+              await deleteRoomZone(currentRoom.id, selectedZone.id);
               setZones(prev => prev.filter(z => z.id !== selectedZone.id));
               setSelectedId(null);
             }}

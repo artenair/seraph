@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { useWebSocket } from '../lib/useWebSocket.js';
-import { inputBase, extractYtId, extractYtPlaylistId, isLocal } from '../lib/utils.js';
-import { fetchSongs, addSong, submitSong, approveSong, updateSong, deleteSong } from '../api.js';
+import { inputBase, extractYtId, extractYtPlaylistId } from '../lib/utils.js';
+import { useRoom } from '../context/RoomContext.jsx';
+import { fetchRoomSongs, addRoomSong, approveRoomSong, updateRoomSong, deleteRoomSong } from '../api.js';
 import { usePersonalAudio } from '../context/PersonalAudioContext.jsx';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Loader2, Pencil, Trash2, X, Check, Plus, ChevronDown } from 'lucide-react';
+import { ref as rtdbRef, onValue } from 'firebase/database';
+import { rtdb } from '../lib/firebase.js';
 
 const input = `${inputBase} px-2 py-1.5`;
 
@@ -28,7 +30,7 @@ function Toast({ message, onDone }) {
   );
 }
 
-function AddSongCard({ onClick }) {
+function AddSongCard({ onClick, isAdmin }) {
   return (
     <div
       className="relative aspect-square overflow-hidden border border-dashed border-border group cursor-pointer hover:border-foreground/40 transition-colors"
@@ -36,13 +38,14 @@ function AddSongCard({ onClick }) {
     >
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground group-hover:text-foreground transition-colors">
         <Plus size={24} strokeWidth={1.5} />
-        <span className="text-xs">{isLocal ? 'Add a song' : 'Submit a song'}</span>
+        <span className="text-xs">{isAdmin ? 'Add a song' : 'Submit a song'}</span>
       </div>
     </div>
   );
 }
 
-function AddSongModal({ open, onClose, onToast }) {
+function AddSongModal({ open, onClose, onToast, isAdmin }) {
+  const { currentRoom } = useRoom();
   const [urlInput, setUrlInput] = useState('');
   const [message,  setMessage]  = useState('');
   const [loading,  setLoading]  = useState(false);
@@ -52,19 +55,15 @@ function AddSongModal({ open, onClose, onToast }) {
     if (!open) { setUrlInput(''); setMessage(''); setError(null); }
   }, [open]);
 
-  const isPlaylist = isLocal && !!extractYtPlaylistId(urlInput);
+  const isPlaylist = isAdmin && !!extractYtPlaylistId(urlInput);
 
   async function handleSubmit() {
     if (!urlInput.trim()) return;
     setLoading(true);
     setError(null);
     try {
-      if (isLocal) {
-        await addSong(urlInput.trim());
-      } else {
-        await submitSong(urlInput.trim(), message.trim());
-        onToast('Your submission has been sent for review.');
-      }
+      await addRoomSong(currentRoom.id, urlInput.trim(), message.trim());
+      if (!isAdmin) onToast('Your submission has been sent for review.');
       onClose();
     } catch (e) {
       setError(e.message);
@@ -76,26 +75,26 @@ function AddSongModal({ open, onClose, onToast }) {
   function submitLabel() {
     if (loading) return <Loader2 size={14} className="animate-spin" />;
     if (isPlaylist) return 'Import playlist';
-    return isLocal ? 'Add' : 'Submit';
+    return isAdmin ? 'Add' : 'Submit';
   }
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>{isLocal ? 'Add a song' : 'Submit a song'}</DialogTitle>
+          <DialogTitle>{isAdmin ? 'Add a song' : 'Submit a song'}</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-2">
           <input
             className={`${input} w-full`}
             value={urlInput}
             onChange={e => setUrlInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && isLocal && handleSubmit()}
+            onKeyDown={e => e.key === 'Enter' && isAdmin && handleSubmit()}
             placeholder="YouTube URL or playlist URL"
             disabled={loading}
             autoFocus
           />
-          {!isLocal && (
+          {!isAdmin && (
             <textarea
               className={`${input} w-full resize-none`}
               rows={3}
@@ -119,6 +118,7 @@ function AddSongModal({ open, onClose, onToast }) {
 
 function SongCard({ song, allSongs, onUpdated, onDeleted }) {
   const { play } = usePersonalAudio();
+  const { currentRoom } = useRoom();
   const [editing,  setEditing]  = useState(false);
   const [title,    setTitle]    = useState(song.title);
   const [artist,   setArtist]   = useState(song.artist);
@@ -137,7 +137,7 @@ function SongCard({ song, allSongs, onUpdated, onDeleted }) {
   async function handleSave() {
     setSaving(true);
     const tags    = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
-    const updated = await updateSong(song.id, { title, artist, tags });
+    const updated = await updateRoomSong(currentRoom.id, song, { title, artist, tags: JSON.stringify(tags) });
     onUpdated(updated);
     setEditing(false);
     setSaving(false);
@@ -146,7 +146,7 @@ function SongCard({ song, allSongs, onUpdated, onDeleted }) {
   async function handleDelete() {
     if (!confirm(`Delete "${song.title}"?`)) return;
     setDeleting(true);
-    await deleteSong(song.id);
+    await deleteRoomSong(currentRoom.id, song.id);
     onDeleted(song.id);
   }
 
@@ -233,6 +233,7 @@ function RemoteSongCard({ song }) {
 
 function PendingCard({ song, onApproved, onRejected }) {
   const { play } = usePersonalAudio();
+  const { currentRoom } = useRoom();
   const [approving, setApproving] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const img = thumb(song);
@@ -240,7 +241,7 @@ function PendingCard({ song, onApproved, onRejected }) {
   async function handleApprove(e) {
     e.stopPropagation();
     setApproving(true);
-    const updated = await approveSong(song.id);
+    const updated = await approveRoomSong(currentRoom.id, song);
     onApproved(updated);
   }
 
@@ -248,7 +249,7 @@ function PendingCard({ song, onApproved, onRejected }) {
     e.stopPropagation();
     if (!confirm(`Reject "${song.title}"?`)) return;
     setRejecting(true);
-    await deleteSong(song.id);
+    await deleteRoomSong(currentRoom.id, song.id);
     onRejected(song.id);
   }
 
@@ -297,6 +298,8 @@ function PendingCard({ song, onApproved, onRejected }) {
 }
 
 export function MusicTab() {
+  const { isAdmin, isDJ, currentRoom } = useRoom();
+  const canManageMusic = isAdmin || isDJ;
   const [songs,       setSongs]       = useState([]);
   const [modalOpen,   setModalOpen]   = useState(false);
   const [pendingOpen, setPendingOpen] = useState(true);
@@ -305,24 +308,35 @@ export function MusicTab() {
   const [toast,       setToast]       = useState(null);
   const clearToast = useRef(() => setToast(null)).current;
 
+  // Initial load from Firestore
   useEffect(() => {
-    fetchSongs().then(setSongs);
-  }, []);
+    if (!currentRoom?.id) return;
+    fetchRoomSongs(currentRoom.id).then(setSongs);
+  }, [currentRoom?.id]);
 
-  useWebSocket(msg => {
-    if (msg.type === 'song_created') {
-      setSongs(prev => prev.some(s => s.id === msg.song.id) ? prev : [msg.song, ...prev]);
-    }
-    if (msg.type === 'song_submitted' && isLocal) {
-      setSongs(prev => prev.some(s => s.id === msg.song.id) ? prev : [msg.song, ...prev]);
-    }
-    if (msg.type === 'song_updated') {
-      setSongs(prev => prev.map(s => s.id === msg.song.id ? msg.song : s));
-    }
-    if (msg.type === 'song_deleted') {
-      setSongs(prev => prev.filter(s => s.id !== msg.id));
-    }
-  });
+  // Real-time updates via RTDB
+  useEffect(() => {
+    if (!currentRoom?.id) return;
+    const firstCall = { seen: false };
+    const unsub = onValue(rtdbRef(rtdb, `rooms/${currentRoom.id}/songEvent`), snapshot => {
+      if (!firstCall.seen) { firstCall.seen = true; return; } // skip initial value, Firestore covers it
+      const event = snapshot.val();
+      if (!event) return;
+      if (event.type === 'song_created') {
+        setSongs(prev => prev.some(s => s.id === event.song.id) ? prev : [event.song, ...prev]);
+      }
+      if (event.type === 'song_submitted' && canManageMusic) {
+        setSongs(prev => prev.some(s => s.id === event.song.id) ? prev : [event.song, ...prev]);
+      }
+      if (event.type === 'song_updated') {
+        setSongs(prev => prev.map(s => s.id === event.song.id ? event.song : s));
+      }
+      if (event.type === 'song_deleted') {
+        setSongs(prev => prev.filter(s => s.id !== event.songId));
+      }
+    });
+    return unsub;
+  }, [currentRoom?.id, isAdmin]);
 
   const pending  = songs.filter(s => s.status === 'pending');
   const approved = songs.filter(s => s.status !== 'pending');
@@ -357,7 +371,7 @@ export function MusicTab() {
       </div>
 
       {/* Pending queue — local only, collapsible */}
-      {isLocal && pending.length > 0 && (
+      {canManageMusic && pending.length > 0 && (
         <div className="flex flex-col gap-2">
           <button
             className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide hover:text-foreground transition-colors w-fit"
@@ -386,9 +400,9 @@ export function MusicTab() {
 
       {/* Song grid */}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
-        <AddSongCard onClick={() => setModalOpen(true)} />
+        <AddSongCard onClick={() => setModalOpen(true)} isAdmin={canManageMusic} />
         {filtered.map(song => (
-          isLocal
+          canManageMusic
             ? <SongCard
                 key={song.id}
                 song={song}
@@ -404,6 +418,7 @@ export function MusicTab() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
         onToast={setToast}
+        isAdmin={canManageMusic}
       />
 
       {toast && <Toast message={toast} onDone={clearToast} />}

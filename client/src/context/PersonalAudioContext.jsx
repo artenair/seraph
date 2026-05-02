@@ -1,5 +1,4 @@
 import { createContext, useContext, useRef, useState, useEffect } from 'react';
-import { useWebSocket } from '../lib/useWebSocket.js';
 import { extractYtId } from '../lib/utils.js';
 
 const Ctx = createContext({});

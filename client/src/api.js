@@ -1,33 +1,115 @@
-const get  = url => fetch(url).then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
-const post = (url, body) => fetch(url, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(body),
-}).then(r => r.json().then(d => r.ok ? d : Promise.reject(new Error(d.error ?? r.statusText))));
-const patch = (url, body) => fetch(url, {
-  method: 'PATCH',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify(body),
-}).then(r => r.json().then(d => r.ok ? d : Promise.reject(new Error(d.error ?? r.statusText))));
+import { collection, getDocs, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { ref as rtdbRef, set } from 'firebase/database';
+import { getIdToken } from 'firebase/auth';
+import { db, rtdb, auth } from './lib/firebase.js';
 
-export const fetchSite        = ()     => get('/api/site');
-export const fetchExorcists   = ()     => get('/api/exorcists');
-export const fetchMissions    = ()     => get('/api/missions');
-export const fetchExorcist    = id     => get(`/api/exorcists/${encodeURIComponent(id)}`);
-export const fetchMission     = id     => get(`/api/missions/${encodeURIComponent(id)}`);
-export const fetchBlasphemies = ()     => get('/api/blasphemies');
-export const fetchAgendas     = ()     => get('/api/agendas');
-export const createExorcist   = body   => post('/api/exorcists', body);
-export const deleteExorcist   = id     => fetch(`/api/exorcists/${encodeURIComponent(id)}`, { method: 'DELETE' });
+// -- Audio zones
 
-export const fetchAudioZones  = ()        => get('/api/audio-zones');
-export const createAudioZone  = body      => post('/api/audio-zones', body);
-export const updateAudioZone  = (id, body) => patch(`/api/audio-zones/${id}`, body);
-export const deleteAudioZone  = id        => fetch(`/api/audio-zones/${id}`, { method: 'DELETE' });
+export const fetchRoomZones = async (roomId) => {
+  const snap = await getDocs(collection(db, 'rooms', roomId, 'audioZones'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+};
 
-export const fetchSongs       = ()              => get('/api/music');
-export const addSong          = url             => post('/api/music', { url });
-export const submitSong       = (url, message)  => post('/api/music', { url, message });
-export const approveSong      = id              => post(`/api/music/${id}/approve`, {});
-export const updateSong       = (id, body)      => patch(`/api/music/${id}`, body);
-export const deleteSong       = id              => fetch(`/api/music/${id}`, { method: 'DELETE' });
+export const createRoomZone = async (roomId, body) => {
+  const { addDoc } = await import('firebase/firestore');
+  const data = { name: body.name ?? 'Zone', x: body.x ?? 0, y: body.y ?? 0, radius: body.radius ?? 60, playlist: [] };
+  const ref  = await addDoc(collection(db, 'rooms', roomId, 'audioZones'), data);
+  return { id: ref.id, ...data };
+};
+
+export const updateRoomZone = async (roomId, id, body) => {
+  const { getDoc } = await import('firebase/firestore');
+  const zoneRef = doc(db, 'rooms', roomId, 'audioZones', id);
+  await updateDoc(zoneRef, body);
+  const snap = await getDoc(zoneRef);
+  return { id: snap.id, ...snap.data() };
+};
+
+export const deleteRoomZone = async (roomId, id) => {
+  await deleteDoc(doc(db, 'rooms', roomId, 'audioZones', id));
+};
+
+// -- Songs
+
+export const fetchRoomSongs = async (roomId) => {
+  const snap = await getDocs(collection(db, 'rooms', roomId, 'songs'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+};
+
+async function authFetch(url, options = {}) {
+  const token = await getIdToken(auth.currentUser);
+  const r = await fetch(url, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...options.headers },
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? r.statusText);
+  return data;
+}
+
+export const addRoomSong = (roomId, url, message = '') =>
+  authFetch(`/api/rooms/${roomId}/songs`, { method: 'POST', body: JSON.stringify({ url, message }) });
+
+function songEvent(roomId, payload) {
+  return set(rtdbRef(rtdb, `rooms/${roomId}/songEvent`), { ...payload, ts: Date.now() });
+}
+
+export const approveRoomSong = async (roomId, song) => {
+  await updateDoc(doc(db, 'rooms', roomId, 'songs', song.id), { status: 'done' });
+  const updated = { ...song, status: 'done' };
+  await songEvent(roomId, { type: 'song_updated', song: updated });
+  return updated;
+};
+
+export const updateRoomSong = async (roomId, song, body) => {
+  await updateDoc(doc(db, 'rooms', roomId, 'songs', song.id), body);
+  const updated = { ...song, ...body };
+  await songEvent(roomId, { type: 'song_updated', song: updated });
+  return updated;
+};
+
+export const deleteRoomSong = async (roomId, songId) => {
+  await deleteDoc(doc(db, 'rooms', roomId, 'songs', songId));
+  await songEvent(roomId, { type: 'song_deleted', songId });
+};
+
+// -- Talismans
+
+export const fetchRoomTalismans = async (roomId) => {
+  const snap = await getDocs(collection(db, 'rooms', roomId, 'talismans'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+};
+
+function talismanEvent(roomId, payload) {
+  return set(rtdbRef(rtdb, `rooms/${roomId}/talismanEvent`), { ...payload, ts: Date.now() });
+}
+
+export const createRoomTalisman = async (roomId, { name, totalSlashes, hidden }) => {
+  const { addDoc } = await import('firebase/firestore');
+  const data     = { name, slashes: 0, total_slashes: totalSlashes, hidden: !!hidden, pinned: false, createdAt: Date.now() };
+  const ref      = await addDoc(collection(db, 'rooms', roomId, 'talismans'), data);
+  const talisman = { id: ref.id, ...data };
+  await talismanEvent(roomId, { type: 'talisman_created', talisman });
+  return talisman;
+};
+
+export const updateRoomTalisman = async (roomId, talisman, updates) => {
+  const updated = { ...talisman, ...updates };
+  if (updates.total_slashes !== undefined) {
+    updated.total_slashes = Math.max(1, updates.total_slashes);
+    updated.slashes       = Math.min(talisman.slashes, updated.total_slashes);
+  }
+  if (updates.slashes !== undefined) {
+    updated.slashes = Math.max(0, Math.min(updated.total_slashes, updates.slashes));
+  }
+  const { id, ...data } = updated;
+  await updateDoc(doc(db, 'rooms', roomId, 'talismans', id), data);
+  await talismanEvent(roomId, { type: 'talisman_updated', talisman: updated });
+  return updated;
+};
+
+export const deleteRoomTalisman = async (roomId, talismanId) => {
+  await deleteDoc(doc(db, 'rooms', roomId, 'talismans', talismanId));
+  await talismanEvent(roomId, { type: 'talisman_deleted', talismanId });
+};
+
