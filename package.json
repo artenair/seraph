@@ -1,18 +1,14 @@
 {
   "name": "seraph",
   "version": "0.1.0",
-  "type": "module",
+  "private": true,
   "scripts": {
-    "dev": "concurrently -n server,client,cloudflare -c cyan,magenta,yellow \"node --watch server.js\" \"npm run dev --prefix client\" \"cloudflared tunnel --config ~/.cloudflared/seraph-dashboard.yml run seraph-dashboard\"",
-    "start": "node server.js",
-    "import": "node scripts/import-json.js"
-  },
-  "dependencies": {
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "firebase-admin": "^13.8.0"
+    "dev": "concurrently \"node server/index.js\" \"npm run dev --prefix client\"",
+    "server": "node server/index.js",
+    "client": "npm run dev --prefix client",
+    "build": "npm run build --prefix client"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.1.2"
   }
 }

@@ -5,62 +5,87 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Full dev environment (server + Vite client + cloudflared tunnel)
+# Full dev environment (server + Vite client)
 npm run dev
 
 # Server only
-npm start
+npm run server
 
-# Client only (from client/)
-cd client && npm run dev    # port 5173, proxies /api and /ws to :3001
+# Client only
+npm run client    # port 5173, proxies /api and /auth to server :3001
 
-# Production build (output goes to dist/)
-cd client && npm run build
-
-# Initialize database from JSON files
-npm run import
+# Production build (output goes to client/dist/)
+npm run build
 ```
 
 There is no test suite or lint script configured.
 
 ## Architecture
 
-Seraph is a full-stack tabletop RPG companion app: Node/Express backend with SQLite, React 19 + Vite frontend, and real-time audio sync over WebSockets.
+Seraph is a tabletop RPG companion app. The codebase is split into two equal peers:
 
-**Server** (`server.js`) runs on port 3001 and owns:
-- REST API under `/api/*`
-- WebSocket server at `/ws` — broadcasts audio commands and streams roll history to new connections
-- SQLite database via `better-sqlite3` (`data/site.db`)
+```
+seraph/
+├── client/    React 19 + Vite frontend
+├── server/    Node/Express API server
+└── .env       Server environment variables
+```
 
-**Client** (`client/src/`) is a single-page app. Vite proxies `/api` and `/ws` to the server in dev. In production, the server serves `dist/` statically.
+**Server** (`server/index.js`) runs on port 3001:
+- `POST /api/rooms/:roomId/songs` — YouTube song/playlist import (API key stays server-side)
+- `GET/POST /auth/discord` — Discord OAuth → Firebase custom token
+- No database — all persistent data is in Firebase
 
-### Database schema (key tables)
+**Client** (`client/src/`) is a single-page app. Vite proxies `/api` and `/auth` to the server in dev.
 
-| Table | Purpose |
+### Firebase services
+
+| Service | Purpose |
 |---|---|
-| `sites` | Single-row site metadata |
-| `exorcists` | Player characters with abilities JSON and status |
-| `blasphemies` | Dark-power rules with associated abilities |
-| `agendas` | Character agendas with voice line metadata |
-| `missions` | Mission definitions with squads and domains JSON |
-| `rolls` | Dice roll history (d6/d3, hard/risky/divine modifiers) |
-| `talismans` | Story items tracked by slash count |
-| `songs` | YouTube music library (id, title, tags, status) |
-| `audio_zones` | Map zones each carrying a playlist and spatial config |
+| Firebase Auth | Google + Discord login |
+| Firestore | All persistent data (rooms, songs, rolls, talismans, audio zones) |
+| RTDB | Real-time events (audio commands, audio state, song/roll/talisman events, presence, import progress) |
 
-### Context providers (frontend state)
+### Firestore data model
 
-- `AudioContext.jsx` — controls the global YouTube IFrame player, handles zone-based playback, crossfading, and relays commands received over WebSocket. This is the most complex file in the project.
-- `PersonalAudioContext.jsx` — per-client isolated playback mode that bypasses the synchronized zone system.
+All data is room-scoped:
+- `rooms/{roomId}` — name, inviteCode, ownerId
+- `rooms/{roomId}/members/{userId}` — roles array (`Admin`, `Exorcist`, `DJ`)
+- `rooms/{roomId}/songs/{songId}`
+- `rooms/{roomId}/rolls/{rollId}`
+- `rooms/{roomId}/talismans/{talismanId}`
+- `rooms/{roomId}/audioZones/{zoneId}`
+- `users/{userId}` — displayName, provider, onboardingComplete
 
-### `isLocal` pattern
+### RTDB structure
 
-Use `isLocal()` from `client/src/lib/utils.js` to detect local vs. remote client. Mirror this on the server with `req.hostname === 'localhost'` (or the existing util in `server.js`). Do not invent a new mechanism.
+- `rooms/{roomId}/audioCommand` — live audio commands (play, pause, seek, play_at)
+- `rooms/{roomId}/audioState` — DJ heartbeat (zone, index, time) for sync-on-join
+- `rooms/{roomId}/presence/{userId}` — online presence
+- `rooms/{roomId}/rollEvent` — new roll notifications
+- `rooms/{roomId}/songEvent` — song CRUD notifications
+- `rooms/{roomId}/talismanEvent` — talisman CRUD notifications
+- `rooms/{roomId}/importProgress` — playlist import progress
+
+### Key context providers
+
+- `AuthContext` — Firebase auth state, display name, onboarding
+- `RoomContext` — current room, roles (isAdmin, isDJ, isOwner), members, presence
+- `AudioContext` — YouTube IFrame player, zone-based playback, RTDB audio sync. Most complex file.
+- `PersonalAudioContext` — per-client isolated playback, bypasses room sync
+
+### Role system
+
+- **Admin** — room management, talisman editing, exorcist/mission tabs (if re-enabled)
+- **DJ** — audio controls, music library management
+- **Exorcist** — player character role (no special gates currently)
+- Room creator gets Admin + DJ by default
 
 ### Music / tagging
 
-Songs are auto-tagged by keyword matching (not LLM). See `scripts/backfill-tags.js` for the pattern; match it for any new tagging logic.
+Songs are auto-tagged by keyword scraping from YouTube (not LLM). See `fetchYtTags` in `server/index.js`.
 
 ### Environment
 
-`.env.example` documents the only env var: `SITE_PATH` (empty = local dev, set to a path prefix for deployed environments).
+Server vars live in `.env` at the project root. Client vars (all `VITE_*`) live in `client/.env.local`.
+See `.env.example` for all required variables.
