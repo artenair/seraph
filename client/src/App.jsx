@@ -11,6 +11,9 @@ import { ActionTab } from './components/ActionTab.jsx';
 import { MusicTab }  from './components/MusicTab.jsx';
 import { NowPlaying } from './components/NowPlaying.jsx';
 import { AudioProvider, useAudio } from './context/AudioContext.jsx';
+import { PersonalAudioProvider } from './context/PersonalAudioContext.jsx';
+import { PersonalNowPlaying } from './components/PersonalNowPlaying.jsx';
+import { PlaylistImportBar } from './components/PlaylistImportBar.jsx';
 import { Button } from '@/components/ui/button';
 import { isLocal } from './lib/utils.js';
 
@@ -42,6 +45,7 @@ export default function App() {
 
   return (
     <AudioProvider>
+    <PersonalAudioProvider>
     <div className="h-screen flex flex-col bg-background text-foreground">
       <header className="shrink-0 z-20 border-b border-border bg-background px-6 py-3 flex items-center gap-6">
         <h1 className="text-sm font-semibold whitespace-nowrap">
@@ -52,7 +56,7 @@ export default function App() {
           <TabsList>
             {isLocal && <TabsTrigger value="exorcists">Exorcists</TabsTrigger>}
             {isLocal && <TabsTrigger value="missions">Missions</TabsTrigger>}
-            {isLocal && <TabsTrigger value="music">Music</TabsTrigger>}
+            <TabsTrigger value="music">Music</TabsTrigger>
             <TabsTrigger value="action">Take action!</TabsTrigger>
           </TabsList>
         </Tabs>
@@ -77,7 +81,7 @@ export default function App() {
             onSelect={id => openPanel('mission', id)}
           />
         )}
-        {tab === 'music'  && <MusicTab />}
+        {tab === 'music' && <MusicTab />}
         {tab === 'action' && <ActionTabWrapper />}
       </main>
 
@@ -103,7 +107,10 @@ export default function App() {
         </DialogContent>
       </Dialog>
       <NowPlaying />
+      <PersonalNowPlaying />
+      <PlaylistImportBar />
     </div>
+    </PersonalAudioProvider>
     </AudioProvider>
   );
 }

@@ -25,7 +25,9 @@ export const createAudioZone  = body      => post('/api/audio-zones', body);
 export const updateAudioZone  = (id, body) => patch(`/api/audio-zones/${id}`, body);
 export const deleteAudioZone  = id        => fetch(`/api/audio-zones/${id}`, { method: 'DELETE' });
 
-export const fetchSongs       = ()     => get('/api/music');
-export const downloadSong     = url    => post('/api/music', { url });
-export const updateSong       = (id, body) => patch(`/api/music/${id}`, body);
-export const deleteSong       = id     => fetch(`/api/music/${id}`, { method: 'DELETE' });
+export const fetchSongs       = ()              => get('/api/music');
+export const addSong          = url             => post('/api/music', { url });
+export const submitSong       = (url, message)  => post('/api/music', { url, message });
+export const approveSong      = id              => post(`/api/music/${id}/approve`, {});
+export const updateSong       = (id, body)      => patch(`/api/music/${id}`, body);
+export const deleteSong       = id              => fetch(`/api/music/${id}`, { method: 'DELETE' });

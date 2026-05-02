@@ -3,17 +3,11 @@ import 'dotenv/config';
 import { createServer } from 'http';
 import express from 'express';
 import { WebSocketServer } from 'ws';
-import { resolve, join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { mkdirSync } from 'fs';
-import { unlink, writeFile } from 'fs/promises';
-import { spawn } from 'child_process';
+import { resolve, join } from 'path';
 import Database from 'better-sqlite3';
 
 const sitePath = resolve(process.argv[2] ?? process.env.SITE_PATH ?? '.');
 const port     = process.env.PORT ?? 3001;
-const musicDir = join(dirname(fileURLToPath(import.meta.url)), 'data/music');
-mkdirSync(musicDir, { recursive: true });
 
 const db = new Database(join(sitePath, 'data/site.db'));
 db.pragma('foreign_keys = ON');
@@ -81,8 +75,9 @@ db.exec(`
   );
 `);
 try { db.exec(`ALTER TABLE rolls ADD COLUMN d3_dice TEXT`); } catch {}
+try { db.exec(`ALTER TABLE songs ADD COLUMN message TEXT NOT NULL DEFAULT ''`); } catch {}
 
-// ── Prepared statements ────────────────────────────────────────────────────────
+// -- Prepared statements 
 
 const q = {
   site: db.prepare('SELECT * FROM sites LIMIT 1'),
@@ -150,7 +145,8 @@ const q = {
 
   songs:           db.prepare(`SELECT * FROM songs ORDER BY created_at DESC`),
   songById:        db.prepare(`SELECT * FROM songs WHERE id = ?`),
-  insertSong:      db.prepare(`INSERT INTO songs (title, artist, youtube_url, tags, status, duration) VALUES (?, ?, ?, ?, ?, ?)`),
+  songByYtId:      db.prepare(`SELECT id FROM songs WHERE youtube_url LIKE ? LIMIT 1`),
+  insertSong:      db.prepare(`INSERT INTO songs (title, artist, youtube_url, tags, status, duration, thumbnail, message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
   updateSong:      db.prepare(`UPDATE songs SET title = ?, artist = ?, tags = ? WHERE id = ?`),
   updateSongStatus:db.prepare(`UPDATE songs SET status = ?, filename = ?, thumbnail = ? WHERE id = ?`),
   deleteSong:      db.prepare(`DELETE FROM songs WHERE id = ?`),
@@ -163,7 +159,148 @@ const q = {
   recentRolls: db.prepare(`SELECT * FROM rolls ORDER BY id DESC LIMIT ?`),
 };
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// -- Helpers
+
+function isLocal(req) {
+  if (req.headers['x-forwarded-for']) return false;
+  return req.hostname === 'localhost' || req.hostname === '127.0.0.1';
+}
+
+function extractYtId(url) {
+  const patterns = [
+    /[?&]v=([a-zA-Z0-9_-]{11})/,
+    /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+    /\/embed\/([a-zA-Z0-9_-]{11})/,
+  ];
+  for (const p of patterns) {
+    const m = p.exec(url);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function extractYtPlaylistId(url) {
+  if (!url || /[?&]v=/.test(url)) return null;
+  const m = /[?&]list=([a-zA-Z0-9_-]+)/.exec(url);
+  return m ? m[1] : null;
+}
+
+async function fetchYtTags(ytId) {
+  try {
+    const r = await fetch(`https://www.youtube.com/watch?v=${ytId}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    if (!r.ok) return [];
+    const html = await r.text();
+
+    // Keywords are embedded in the videoDetails JSON blob on the page
+    const vdStart = html.indexOf('"videoDetails"');
+    if (vdStart === -1) return [];
+    const kwStart = html.indexOf('"keywords":[', vdStart);
+    if (kwStart === -1) return [];
+
+    // Walk bracket depth to extract the array cleanly
+    const arrStart = kwStart + '"keywords":'.length;
+    let depth = 0, i = arrStart;
+    while (i < html.length) {
+      if (html[i] === '[') depth++;
+      else if (html[i] === ']') { depth--; if (depth === 0) break; }
+      i++;
+    }
+    const tags = JSON.parse(html.slice(arrStart, i + 1));
+    return Array.isArray(tags) ? tags.slice(0, 10) : [];
+  } catch {
+    return [];
+  }
+}
+
+async function fetchPlaylistMeta(playlistId) {
+  const key = process.env.YOUTUBE_API_KEY;
+  const r = await fetch(`https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${encodeURIComponent(playlistId)}&key=${key}`);
+  if (!r.ok) throw new Error('failed to fetch playlist info');
+  const data = await r.json();
+  return data.items?.[0]?.snippet?.title ?? 'Playlist';
+}
+
+async function fetchPlaylistVideoIds(playlistId) {
+  const key = process.env.YOUTUBE_API_KEY;
+  const ids = [];
+  let pageToken = '';
+  do {
+    const url = new URL('https://www.googleapis.com/youtube/v3/playlistItems');
+    url.searchParams.set('part', 'snippet');
+    url.searchParams.set('maxResults', '50');
+    url.searchParams.set('playlistId', playlistId);
+    url.searchParams.set('key', key);
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('failed to fetch playlist items');
+    const data = await r.json();
+    for (const item of data.items ?? []) {
+      const videoId = item.snippet?.resourceId?.videoId;
+      if (videoId) ids.push({
+        videoId,
+        title:        item.snippet.title,
+        channelTitle: item.snippet.channelTitle,
+        thumbnail:    item.snippet.thumbnails?.high?.url ?? item.snippet.thumbnails?.default?.url ?? '',
+      });
+    }
+    pageToken = data.nextPageToken ?? '';
+  } while (pageToken);
+  return ids;
+}
+
+async function importPlaylist(playlistId, local) {
+  let playlistTitle, items;
+  try {
+    [playlistTitle, items] = await Promise.all([
+      fetchPlaylistMeta(playlistId),
+      fetchPlaylistVideoIds(playlistId),
+    ]);
+  } catch (e) {
+    broadcast({ type: 'playlist_import_error', error: e.message });
+    return;
+  }
+
+  const total = items.length;
+  let done = 0;
+  broadcast({ type: 'playlist_import_progress', playlistTitle, done, total });
+
+  for (const { videoId, title: ytTitle, channelTitle, thumbnail: ytThumb } of items) {
+    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+    if (q.songByYtId.get(`%${videoId}%`)) {
+      done++;
+      broadcast({ type: 'playlist_import_progress', playlistTitle, done, total });
+      continue;
+    }
+
+    try {
+      const [meta, tags] = await Promise.all([
+        fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`)
+          .then(r => r.ok ? r.json() : null),
+        fetchYtTags(videoId),
+      ]);
+
+      const title     = meta?.title       ?? ytTitle      ?? 'Unknown';
+      const artist    = meta?.author_name ?? channelTitle ?? '';
+      const thumbnail = meta?.thumbnail_url ?? ytThumb    ?? '';
+      const status    = local ? 'done' : 'pending';
+
+      const ins  = q.insertSong.run(title, artist, videoUrl, JSON.stringify(tags), status, 0, thumbnail, '');
+      const song = q.songById.get(ins.lastInsertRowid);
+      broadcast({ type: 'song_created', song });
+    } catch {}
+
+    done++;
+    broadcast({ type: 'playlist_import_progress', playlistTitle, done, total });
+  }
+
+  broadcast({ type: 'playlist_import_done', playlistTitle, total });
+}
 
 function calcCategory(missions) {
   if (missions >= 7) return 5;
@@ -280,7 +417,7 @@ function parseRollRow(row) {
   };
 }
 
-// ── WebSocket ──────────────────────────────────────────────────────────────────
+// -- WebSocket 
 
 const app    = express();
 const server = createServer(app);
@@ -322,10 +459,9 @@ const heartbeat = setInterval(() => {
 
 wss.on('close', () => clearInterval(heartbeat));
 
-// ── Routes ─────────────────────────────────────────────────────────────────────
+// -- Routes 
 
 app.use(express.json());
-app.use('/music', express.static(musicDir));
 
 app.get('/api/site', (_req, res) => {
   res.json(q.site.get());
@@ -483,7 +619,7 @@ app.post('/api/rolls', (req, res) => {
   res.status(201).json(roll);
 });
 
-// ── Talismans ──────────────────────────────────────────────────────────────────
+// -- Talismans 
 
 app.get('/api/talismans', (_req, res) => {
   res.json(q.talismans.all());
@@ -539,7 +675,7 @@ app.delete('/api/talismans/:id', (req, res) => {
   res.status(204).end();
 });
 
-// ── Audio Zones ────────────────────────────────────────────────────────────────
+// -- Audio Zones 
 
 app.get('/api/audio-zones', (_req, res) => {
   res.json(q.audioZones.all());
@@ -570,78 +706,50 @@ app.delete('/api/audio-zones/:id', (req, res) => {
   res.status(204).end();
 });
 
-// ── Music ──────────────────────────────────────────────────────────────────────
+// -- Music
 
-app.get('/api/music', (_req, res) => {
-  res.json(q.songs.all());
+app.get('/api/music', (req, res) => {
+  const songs = q.songs.all();
+  res.json(isLocal(req) ? songs : songs.filter(s => s.status === 'done'));
 });
 
-app.post('/api/music', (req, res) => {
-  const { url } = req.body;
+app.post('/api/music', async (req, res) => {
+  const { url, message = '' } = req.body;
   if (!url?.trim()) return res.status(400).json({ error: 'url is required' });
 
-  let infoBuf = '';
-  const info = spawn('yt-dlp', ['--dump-json', '--no-playlist', url.trim()]);
-  info.stdout.on('data', d => { infoBuf += d; });
-  info.on('close', code => {
-    if (code !== 0) return res.status(400).json({ error: 'could not fetch video info' });
-    let meta;
-    try { meta = JSON.parse(infoBuf); } catch { return res.status(400).json({ error: 'invalid video info' }); }
+  const playlistId = extractYtPlaylistId(url.trim());
+  if (playlistId) {
+    if (!isLocal(req)) return res.status(403).json({ error: 'forbidden' });
+    importPlaylist(playlistId, true).catch(console.error);
+    return res.status(202).json({ importing: true });
+  }
 
-    const title    = meta.title    ?? 'Unknown';
-    const artist   = meta.uploader ?? meta.channel ?? '';
-    const ytId     = meta.id;
-    const filename = `${ytId}.mp3`;
+  const ytId = extractYtId(url.trim());
+  if (ytId && q.songByYtId.get(`%${ytId}%`)) return res.status(409).json({ error: 'this song is already in the library' });
 
-    const insert = q.insertSong.run(title, artist, url.trim(), '[]', 'downloading', meta.duration ?? 0);
-    const song   = q.songById.get(insert.lastInsertRowid);
-    res.status(202).json(song);
-
-    // Download thumbnail from YouTube CDN
-    const thumbFile = `${ytId}.jpg`;
-    fetch(`https://i.ytimg.com/vi/${ytId}/maxresdefault.jpg`)
-      .then(r => r.ok ? r.arrayBuffer() : Promise.reject())
-      .then(buf => writeFile(join(musicDir, thumbFile), Buffer.from(buf)))
-      .catch(() => {});
-
-    const dl = spawn('yt-dlp', [
-      '-x', '--audio-format', 'mp3', '--audio-quality', '0',
-      '--no-playlist',
-      '-o', join(musicDir, `${ytId}.%(ext)s`),
-      url.trim(),
+  let meta, tags;
+  try {
+    [meta, tags] = await Promise.all([
+      fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url.trim())}&format=json`).then(r => {
+        if (!r.ok) throw new Error('could not fetch video info');
+        return r.json();
+      }),
+      ytId ? fetchYtTags(ytId) : Promise.resolve([]),
     ]);
-    const downloadRe = /\[download\]\s+([\d.]+)%/;
-    const timeRe     = /time=(\d{2}):(\d{2}):(\d{2}\.?\d*)/;
-    let lastPercent  = -1;
-    function parseProgress(chunk) {
-      const str = chunk.toString();
-      const dlMatch = downloadRe.exec(str);
-      if (dlMatch) {
-        const percent = parseFloat(dlMatch[1]);
-        if (percent !== lastPercent) {
-          lastPercent = percent;
-          broadcast({ type: 'song_progress', id: song.id, phase: 'download', percent });
-        }
-        return;
-      }
-      if (song.duration > 0) {
-        const tMatch = timeRe.exec(str);
-        if (tMatch) {
-          const current = parseInt(tMatch[1]) * 3600 + parseInt(tMatch[2]) * 60 + parseFloat(tMatch[3]);
-          const percent = Math.min(100, (current / song.duration) * 100);
-          broadcast({ type: 'song_progress', id: song.id, phase: 'convert', percent });
-        }
-      }
-    }
-    dl.stdout.on('data', parseProgress);
-    dl.stderr.on('data', parseProgress);
-    dl.on('close', dlCode => {
-      const status    = dlCode === 0 ? 'done' : 'error';
-      const thumbnail = dlCode === 0 ? `${ytId}.jpg` : '';
-      q.updateSongStatus.run(status, dlCode === 0 ? filename : '', thumbnail, song.id);
-      broadcast({ type: 'song_updated', song: q.songById.get(song.id) });
-    });
-  });
+  } catch {
+    return res.status(400).json({ error: 'could not fetch video info' });
+  }
+
+  const title     = meta.title          ?? 'Unknown';
+  const artist    = meta.author_name    ?? '';
+  const thumbnail = meta.thumbnail_url  ?? '';
+  const local     = isLocal(req);
+  const status    = local ? 'done' : 'pending';
+
+  const insert = q.insertSong.run(title, artist, url.trim(), JSON.stringify(tags), status, 0, thumbnail, message.trim());
+  const song = q.songById.get(insert.lastInsertRowid);
+  broadcast({ type: local ? 'song_created' : 'song_submitted', song });
+  res.status(201).json(song);
 });
 
 app.patch('/api/music/:id', (req, res) => {
@@ -656,18 +764,25 @@ app.patch('/api/music/:id', (req, res) => {
   res.json(q.songById.get(song.id));
 });
 
-app.delete('/api/music/:id', async (req, res) => {
+app.post('/api/music/:id/approve', (req, res) => {
+  if (!isLocal(req)) return res.status(403).json({ error: 'forbidden' });
   const song = q.songById.get(req.params.id);
   if (!song) return res.status(404).json({ error: 'not found' });
+  db.prepare(`UPDATE songs SET status = 'done' WHERE id = ?`).run(song.id);
+  const updated = q.songById.get(song.id);
+  broadcast({ type: 'song_updated', song: updated });
+  res.json(updated);
+});
 
+app.delete('/api/music/:id', (req, res) => {
+  const song = q.songById.get(req.params.id);
+  if (!song) return res.status(404).json({ error: 'not found' });
   q.deleteSong.run(song.id);
-  if (song.filename) {
-    try { await unlink(join(musicDir, song.filename)); } catch {}
-  }
+  broadcast({ type: 'song_deleted', id: song.id });
   res.status(204).end();
 });
 
-// ── Start ──────────────────────────────────────────────────────────────────────
+// -- Start
 
 server.listen(port, () => {
   console.log(`site:  ${sitePath}`);
