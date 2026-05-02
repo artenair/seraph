@@ -8,10 +8,11 @@ const port = process.env.PORT ?? 3001;
 
 // -- Firebase Admin
 
-admin.initializeApp({
-  credential:  admin.credential.applicationDefault(),
-  databaseURL: process.env.FIREBASE_DATABASE_URL,
-});
+const credential = process.env.FIREBASE_SERVICE_ACCOUNT
+  ? admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))
+  : admin.credential.applicationDefault();
+
+admin.initializeApp({ credential, databaseURL: process.env.FIREBASE_DATABASE_URL });
 
 // -- YouTube helpers
 
