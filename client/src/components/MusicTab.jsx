@@ -122,7 +122,7 @@ function SongCard({ song, allSongs, onUpdated, onDeleted }) {
   const [editing,  setEditing]  = useState(false);
   const [title,    setTitle]    = useState(song.title);
   const [artist,   setArtist]   = useState(song.artist);
-  const [tagsRaw,  setTagsRaw]  = useState(() => JSON.parse(song.tags || '[]').join(', '));
+  const [tagsRaw,  setTagsRaw]  = useState(() => (Array.isArray(song.tags) ? song.tags : []).join(', '));
   const [saving,   setSaving]   = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -130,14 +130,14 @@ function SongCard({ song, allSongs, onUpdated, onDeleted }) {
     if (!editing) {
       setTitle(song.title);
       setArtist(song.artist);
-      setTagsRaw(JSON.parse(song.tags || '[]').join(', '));
+      setTagsRaw((Array.isArray(song.tags) ? song.tags : []).join(', '));
     }
   }, [song, editing]);
 
   async function handleSave() {
     setSaving(true);
     const tags    = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
-    const updated = await updateRoomSong(currentRoom.id, song, { title, artist, tags: JSON.stringify(tags) });
+    const updated = await updateRoomSong(currentRoom.id, song, { title, artist, tags });
     onUpdated(updated);
     setEditing(false);
     setSaving(false);
@@ -150,7 +150,7 @@ function SongCard({ song, allSongs, onUpdated, onDeleted }) {
     onDeleted(song.id);
   }
 
-  const tags = JSON.parse(song.tags || '[]');
+  const tags = Array.isArray(song.tags) ? song.tags : [];
   const img  = thumb(song);
 
   return (
@@ -341,13 +341,13 @@ export function MusicTab() {
   const pending  = songs.filter(s => s.status === 'pending');
   const approved = songs.filter(s => s.status !== 'pending');
 
-  const allTags  = [...new Set(approved.flatMap(s => JSON.parse(s.tags || '[]')))].sort();
+  const allTags  = [...new Set(approved.flatMap(s => Array.isArray(s.tags) ? s.tags : []))].sort();
   const filtered = approved.filter(s => {
     if (search) {
       const q = search.toLowerCase();
       if (!s.title.toLowerCase().includes(q) && !s.artist.toLowerCase().includes(q)) return false;
     }
-    if (tagFilter && !JSON.parse(s.tags || '[]').includes(tagFilter)) return false;
+    if (tagFilter && !(Array.isArray(s.tags) ? s.tags : []).includes(tagFilter)) return false;
     return true;
   });
 

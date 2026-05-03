@@ -105,7 +105,7 @@ export function NowPlaying() {
       center={center}
       right={right}
       bottom={0}
-      zIndex={40}
+      zIndex={60}
       drawer={drawer}
     />
   );

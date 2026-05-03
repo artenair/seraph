@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { ActionTab } from './components/ActionTab.jsx';
+import { AudioMap } from './components/AudioMap.jsx';
 import { MusicTab }  from './components/MusicTab.jsx';
 import { CharacterTab } from './components/CharacterTab.jsx';
+import { PlaylistsTab } from './components/PlaylistsTab.jsx';
 import { NowPlaying } from './components/NowPlaying.jsx';
 import { AudioProvider, useAudio } from './context/AudioContext.jsx';
 import { PersonalAudioProvider } from './context/PersonalAudioContext.jsx';
@@ -16,20 +18,46 @@ import { LoginPage } from './components/LoginPage.jsx';
 import { OnboardingDialog } from './components/OnboardingDialog.jsx';
 import { RoomGate } from './components/RoomGate.jsx';
 import { RoomSettings } from './components/RoomSettings.jsx';
-import { User, Music, Bookmark, Settings } from 'lucide-react';
+import { User, Music, Bookmark, Settings, Map, Volume2, VolumeX, ListMusic } from 'lucide-react';
 import { RollPanel } from './components/RollPanel.jsx';
 
 const input = inputBase;
 
 const NAV_ITEMS = [
-  { id: 'character', Icon: User,     title: 'Character' },
-  { id: 'music',     Icon: Music,    title: 'Music'     },
-  { id: 'talismans', Icon: Bookmark, title: 'Talismans' },
+  { id: 'character', Icon: User,      title: 'Character' },
+  { id: 'music',     Icon: Music,     title: 'Music'     },
+  { id: 'playlists', Icon: ListMusic, title: 'Playlists' },
+  { id: 'talismans', Icon: Bookmark,  title: 'Talismans' },
 ];
 
-function ActionTabWrapper() {
-  const { drawerOpen } = useAudio();
-  return <ActionTab drawerOpen={drawerOpen ?? false} />;
+function ActivityBarAudioButtons({ tab, setTab }) {
+  const { clientMuted, toggleClientMute } = useAudio();
+  const { isAdmin, isDJ } = useRoom();
+
+  return (
+    <>
+      {isAdmin && (
+        <button
+          onClick={() => setTab('audiomap')}
+          title="Audio Map"
+          className={`w-full flex items-center justify-center py-3 transition-colors relative ${
+            tab === 'audiomap'
+              ? 'text-foreground before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:bg-primary'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}>
+          <Map size={20} />
+        </button>
+      )}
+      {!isDJ && (
+        <button
+          onClick={toggleClientMute}
+          title={clientMuted ? 'Listen' : 'Mute'}
+          className="w-full flex items-center justify-center py-3 text-muted-foreground hover:text-foreground transition-colors">
+          {clientMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+        </button>
+      )}
+    </>
+  );
 }
 
 function AppContent() {
@@ -70,6 +98,8 @@ function AppContent() {
           </button>
         ))}
 
+        <ActivityBarAudioButtons tab={tab} setTab={setTab} />
+
         <div className="mt-auto flex flex-col items-center gap-1 pb-2">
           <button
             onClick={() => setSettingsOpen(true)}
@@ -105,10 +135,14 @@ function AppContent() {
 
         {/* Content + Roll Panel */}
         <div className="flex flex-1 min-h-0 overflow-hidden">
-          <main className="flex-1 overflow-auto p-6 min-h-0">
+          <main className={tab === 'audiomap'
+            ? 'flex-1 overflow-hidden flex flex-col min-h-0'
+            : 'flex-1 overflow-auto p-6 min-h-0'}>
             {tab === 'character' && <CharacterTab />}
             {tab === 'music'     && <MusicTab />}
-            {tab === 'talismans' && <ActionTabWrapper />}
+            {tab === 'playlists' && <PlaylistsTab />}
+            {tab === 'talismans' && <ActionTab />}
+            {tab === 'audiomap'  && <AudioMap />}
           </main>
           <RollPanel />
         </div>

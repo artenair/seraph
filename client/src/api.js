@@ -75,6 +75,32 @@ export const deleteRoomSong = async (roomId, songId) => {
   await songEvent(roomId, { type: 'song_deleted', songId });
 };
 
+// -- Playlists
+
+export const fetchRoomPlaylists = async (roomId) => {
+  const snap = await getDocs(collection(db, 'rooms', roomId, 'playlists'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+};
+
+export const createRoomPlaylist = async (roomId, { name }) => {
+  const { addDoc } = await import('firebase/firestore');
+  const data = { name: name ?? 'New Playlist', songs: [] };
+  const ref  = await addDoc(collection(db, 'rooms', roomId, 'playlists'), data);
+  return { id: ref.id, ...data };
+};
+
+export const updateRoomPlaylist = async (roomId, id, body) => {
+  const { getDoc } = await import('firebase/firestore');
+  const ref = doc(db, 'rooms', roomId, 'playlists', id);
+  await updateDoc(ref, body);
+  const snap = await getDoc(ref);
+  return { id: snap.id, ...snap.data() };
+};
+
+export const deleteRoomPlaylist = async (roomId, id) => {
+  await deleteDoc(doc(db, 'rooms', roomId, 'playlists', id));
+};
+
 // -- Talismans
 
 export const fetchRoomTalismans = async (roomId) => {

@@ -12,13 +12,20 @@ export function PersonalAudioProvider({ children }) {
   const volumeRef    = useRef(1);
   const pollRef      = useRef(null);
 
-  const [localSong,    setLocalSong]    = useState(null);
-  const [isPlaying,    setIsPlaying]    = useState(false);
-  const [volume,       setVolume]       = useState(1);
-  const [currentTime,  setCurrentTime]  = useState(0);
-  const [duration,     setDuration]     = useState(0);
+  const [localSong,     setLocalSong]     = useState(null);
+  const [localPlaylist, setLocalPlaylist] = useState([]);
+  const [localIndex,    setLocalIndex]    = useState(0);
+  const [isPlaying,     setIsPlaying]     = useState(false);
+  const [volume,        setVolume]        = useState(1);
+  const [currentTime,   setCurrentTime]   = useState(0);
+  const [duration,      setDuration]      = useState(0);
+
+  const localPlaylistRef = useRef([]);
+  const localIndexRef    = useRef(0);
 
   useEffect(() => { volumeRef.current = volume; }, [volume]);
+  useEffect(() => { localPlaylistRef.current = localPlaylist; }, [localPlaylist]);
+  useEffect(() => { localIndexRef.current = localIndex; }, [localIndex]);
 
   function startPolling() {
     if (pollRef.current) return;
@@ -61,6 +68,21 @@ export function PersonalAudioProvider({ children }) {
               setIsPlaying(false);
             } else if (e.data === 0) { // ENDED
               stopPolling();
+              const pl   = localPlaylistRef.current;
+              const next = localIndexRef.current + 1;
+              if (next < pl.length) {
+                const song = pl[next];
+                const ytId = extractYtId(song.youtube_url);
+                if (ytId) {
+                  localIndexRef.current = next;
+                  setLocalIndex(next);
+                  setLocalSong(song);
+                  setCurrentTime(0);
+                  setDuration(0);
+                  try { playerRef.current?.loadVideoById({ videoId: ytId }); } catch {}
+                  return;
+                }
+              }
               setIsPlaying(false);
             }
           },
@@ -124,13 +146,22 @@ export function PersonalAudioProvider({ children }) {
     return () => window.removeEventListener('server-playing', handler);
   }, []);
 
-  function play(song) {
+  function playPlaylist(songs, index = 0) {
+    if (!songs?.length) return;
+    const song = songs[index];
     if (!song?.youtube_url) return;
     const ytId = extractYtId(song.youtube_url);
     if (!ytId) return;
+
+    // Sync refs immediately so onStateChange auto-advance sees the new state
+    localPlaylistRef.current = songs;
+    localIndexRef.current    = index;
+    setLocalPlaylist(songs);
+    setLocalIndex(index);
     setLocalSong(song);
     setCurrentTime(0);
     setDuration(0);
+
     try {
       const p = playerRef.current;
       if (!p) return;
@@ -140,10 +171,29 @@ export function PersonalAudioProvider({ children }) {
     } catch {}
   }
 
+  // Single-song play is just a playlist of one — auto-advance won't fire
+  function play(song) {
+    if (song?.youtube_url) playPlaylist([song], 0);
+  }
+
+  function nextTrack() {
+    const pl   = localPlaylistRef.current;
+    const next = localIndexRef.current + 1;
+    if (next < pl.length) playPlaylist(pl, next);
+  }
+
+  function prevTrack() {
+    const pl   = localPlaylistRef.current;
+    const prev = localIndexRef.current - 1;
+    if (prev >= 0) playPlaylist(pl, prev);
+  }
+
   function stop() {
     stopPolling();
     try { playerRef.current?.stopVideo(); } catch {}
     setLocalSong(null);
+    setLocalPlaylist([]);
+    setLocalIndex(0);
     setIsPlaying(false);
     setCurrentTime(0);
     setDuration(0);
@@ -165,7 +215,7 @@ export function PersonalAudioProvider({ children }) {
   }
 
   return (
-    <Ctx.Provider value={{ localSong, isPlaying, volume, setVolume, currentTime, duration, seek, play, stop, togglePlay }}>
+    <Ctx.Provider value={{ localSong, localPlaylist, localIndex, isPlaying, volume, setVolume, currentTime, duration, seek, play, playPlaylist, nextTrack, prevTrack, stop, togglePlay }}>
       {children}
       <div style={{ position: 'fixed', width: 1, height: 1, overflow: 'hidden', bottom: 0, left: 0, pointerEvents: 'none' }}>
         <div ref={containerRef} />

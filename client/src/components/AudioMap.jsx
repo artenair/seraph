@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { fetchRoomZones, createRoomZone, updateRoomZone, deleteRoomZone, fetchRoomSongs } from '../api.js';
+import { fetchRoomZones, createRoomZone, updateRoomZone, deleteRoomZone, fetchRoomSongs, fetchRoomPlaylists } from '../api.js';
 import { useAudio } from '../context/AudioContext.jsx';
 import { useRoom } from '../context/RoomContext.jsx';
-import { zonePlaylist, getLocalStorage, inputBase } from '../lib/utils.js';
-import { SongThumbnail } from './SongThumbnail.jsx';
-import { Trash2, X, Hand, Circle, GripVertical } from 'lucide-react';
+import { getLocalStorage, inputBase } from '../lib/utils.js';
+import { PlaylistEditorDialog } from './PlaylistEditorDialog.jsx';
+import { Trash2, Hand, Circle, ListMusic, ChevronRight } from 'lucide-react';
 
 const GRID_SIZE      = 40;
 const DRAG_THRESHOLD = 5;
@@ -45,16 +45,14 @@ function Toolbar({ mode, onModeChange }) {
 
 // ── Zone panel ─────────────────────────────────────────────────────────────────
 
-function ZonePanel({ zone, color, songs, onUpdate, onDelete }) {
+function ZonePanel({ zone, color, songs, playlists, onUpdate, onUpdatePlaylist, onDelete }) {
   const { currentRoom } = useRoom();
-  const [name, setName] = useState(zone.name);
-  const dragIndex = useRef(null);
+  const [name,          setName]          = useState(zone.name);
+  const [editingPlaylist, setEditingPlaylist] = useState(false);
 
   useEffect(() => { setName(zone.name); }, [zone.id]);
 
-  const playlist      = zonePlaylist(zone);
-  const playlistSongs = playlist.map(id => songs.find(s => s.id === id)).filter(Boolean);
-  const available     = songs.filter(s => !playlist.includes(s.id));
+  const assignedPlaylist = playlists.find(p => p.id === zone.playlistId) ?? null;
 
   async function saveName() {
     if (name.trim() === zone.name) return;
@@ -62,85 +60,67 @@ function ZonePanel({ zone, color, songs, onUpdate, onDelete }) {
     onUpdate(updated);
   }
 
-  async function addSong(songId) {
-    const updated = await updateRoomZone(currentRoom.id, zone.id, { playlist: [...playlist, songId] });
-    onUpdate(updated);
-  }
-
-  async function removeSong(songId) {
-    const updated = await updateRoomZone(currentRoom.id, zone.id, { playlist: playlist.filter(id => id !== songId) });
-    onUpdate(updated);
-  }
-
-  async function reorder(fromIndex, toIndex) {
-    if (fromIndex === toIndex) return;
-    const next = [...playlist];
-    next.splice(toIndex, 0, next.splice(fromIndex, 1)[0]);
-    const updated = await updateRoomZone(currentRoom.id, zone.id, { playlist: next });
+  async function assignPlaylist(playlistId) {
+    const updated = await updateRoomZone(currentRoom.id, zone.id, { playlistId: playlistId || null });
     onUpdate(updated);
   }
 
   return (
-    <div className="w-64 shrink-0 border border-border flex flex-col gap-3 p-3 overflow-y-auto">
-      <div className="flex items-center gap-2">
-        <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
-        <input
-          className={input + ' flex-1 min-w-0'}
-          value={name}
-          onChange={e => setName(e.target.value)}
-          onBlur={saveName}
-          onKeyDown={e => e.key === 'Enter' && e.target.blur()}
-        />
-        <button onClick={onDelete} className="text-muted-foreground hover:text-red-500 shrink-0">
-          <Trash2 size={13} />
-        </button>
-      </div>
+    <>
+      <div className="w-64 shrink-0 border border-border flex flex-col gap-3 p-3">
+        <div className="flex items-center gap-2">
+          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color }} />
+          <input
+            className={input + ' flex-1 min-w-0'}
+            value={name}
+            onChange={e => setName(e.target.value)}
+            onBlur={saveName}
+            onKeyDown={e => e.key === 'Enter' && e.target.blur()}
+          />
+          <button onClick={onDelete} className="text-muted-foreground hover:text-red-500 shrink-0">
+            <Trash2 size={13} />
+          </button>
+        </div>
 
-      <div className="flex flex-col gap-1.5">
-        <p className="text-xs text-muted-foreground">Playlist</p>
-
-        {playlistSongs.length === 0 && (
-          <p className="text-xs text-muted-foreground text-center py-3">No songs yet.</p>
-        )}
-
-        {playlistSongs.map((song, i) => (
-          <div
-            key={song.id}
-            draggable
-            onDragStart={() => { dragIndex.current = i; }}
-            onDragOver={e => e.preventDefault()}
-            onDrop={() => { reorder(dragIndex.current, i); dragIndex.current = null; }}
-            className="flex items-center gap-1.5 cursor-default"
-          >
-            <GripVertical size={12} className="text-muted-foreground/50 shrink-0 cursor-grab" />
-            <SongThumbnail song={song} className="w-6 h-6" />
-            <span className="flex-1 text-xs text-foreground truncate">{song.title}</span>
-            <button onClick={() => removeSong(song.id)} className="text-muted-foreground hover:text-red-500 shrink-0">
-              <X size={12} />
-            </button>
-          </div>
-        ))}
-
-        {available.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="text-xs text-muted-foreground">Playlist</p>
           <select
-            className={input + ' w-full mt-1'}
-            value=""
-            onChange={e => e.target.value && addSong(Number(e.target.value))}
-          >
-            <option value="">Add song…</option>
-            {available.map(s => (
-              <option key={s.id} value={s.id}>{s.title}</option>
+            className={input + ' w-full'}
+            value={zone.playlistId ?? ''}
+            onChange={e => assignPlaylist(e.target.value)}>
+            <option value="">No playlist</option>
+            {playlists.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
-        )}
+          {assignedPlaylist && (
+            <button
+              onClick={() => setEditingPlaylist(true)}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors self-start">
+              <ListMusic size={11} />
+              Edit content
+              <ChevronRight size={11} />
+            </button>
+          )}
+        </div>
       </div>
-    </div>
+
+      {assignedPlaylist && (
+        <PlaylistEditorDialog
+          open={editingPlaylist}
+          onClose={() => setEditingPlaylist(false)}
+          playlist={assignedPlaylist}
+          songs={songs}
+          onUpdate={onUpdatePlaylist}
+        />
+      )}
+    </>
   );
 }
 
 // ── Canvas drawing ─────────────────────────────────────────────────────────────
 
-function drawCanvas(canvas, zones, selectedId, hoveredId, pan, zoom, size, listener, hoveredListener, activeZoneId) {
+function drawCanvas(canvas, zones, selectedId, hoveredId, pan, zoom, size, listener, hoveredListener, activeZoneId, playlists) {
   const { w, h } = size;
   if (w === 0 || h === 0) return;
 
@@ -199,7 +179,9 @@ function drawCanvas(canvas, zones, selectedId, hoveredId, pan, zoom, size, liste
     ctx.textBaseline = 'middle';
     ctx.fillText(zone.name, zone.x, zone.y);
 
-    const playlist = zonePlaylist(zone);
+    const playlist = zone.playlistId
+      ? (playlists?.find(p => p.id === zone.playlistId)?.songs ?? [])
+      : (Array.isArray(zone.playlist) ? zone.playlist : []);
     if (playlist.length > 0) {
       ctx.font = `${trackPx}px sans-serif`;
       ctx.fillStyle = isActive ? color : color + 'aa';
@@ -258,8 +240,9 @@ function drawCanvas(canvas, zones, selectedId, hoveredId, pan, zoom, size, liste
 export function AudioMap() {
   const canvasRef    = useRef(null);
   const containerRef = useRef(null);
-  const [zones,      setZones]      = useState([]);
-  const [songs,      setSongs]      = useState([]);
+  const [zones,     setZones]     = useState([]);
+  const [songs,     setSongs]     = useState([]);
+  const [playlists, setPlaylists] = useState([]);
   const [mode,       setMode]       = useState('hand');
   const [pan,        setPan]        = useState(() => getLocalStorage('audiomap-pan', { x: 0, y: 0 }));
   const [size,       setSize]       = useState({ w: 0, h: 0 });
@@ -273,6 +256,7 @@ export function AudioMap() {
   const { currentRoom } = useRoom();
   const zonesRef       = useRef([]);
   const songsRef       = useRef([]);
+  const playlistsRef   = useRef([]);
   const panRef         = useRef({ x: 0, y: 0 });
   const zoomRef        = useRef(1);
   const listenerRef    = useRef(listener);
@@ -282,6 +266,7 @@ export function AudioMap() {
 
   useEffect(() => { zonesRef.current = zones; }, [zones]);
   useEffect(() => { songsRef.current = songs; }, [songs]);
+  useEffect(() => { playlistsRef.current = playlists; }, [playlists]);
   useEffect(() => { panRef.current = pan; localStorage.setItem('audiomap-pan', JSON.stringify(pan)); }, [pan]);
   useEffect(() => { zoomRef.current = zoom; localStorage.setItem('audiomap-zoom', JSON.stringify(zoom)); }, [zoom]);
   useEffect(() => { listenerRef.current = listener; localStorage.setItem('audiomap-listener', JSON.stringify(listener)); }, [listener]);
@@ -313,11 +298,12 @@ export function AudioMap() {
     if (!currentRoom?.id) return;
     fetchRoomZones(currentRoom.id).then(setZones);
     fetchRoomSongs(currentRoom.id).then(ss => setSongs(ss.filter(s => s.status === 'done')));
+    fetchRoomPlaylists(currentRoom.id).then(setPlaylists);
   }, [currentRoom?.id]);
 
   useEffect(() => {
-    if (canvasRef.current) drawCanvas(canvasRef.current, zones, selectedId, hoveredId, pan, zoom, size, listener, hoverListener, activeZoneId);
-  }, [zones, selectedId, hoveredId, pan, zoom, size, listener, hoverListener, activeZoneId]);
+    if (canvasRef.current) drawCanvas(canvasRef.current, zones, selectedId, hoveredId, pan, zoom, size, listener, hoverListener, activeZoneId, playlists);
+  }, [zones, playlists, selectedId, hoveredId, pan, zoom, size, listener, hoverListener, activeZoneId]);
 
   // Detect zone under listener and delegate playback to context
   useEffect(() => {
@@ -333,7 +319,14 @@ export function AudioMap() {
     activeZoneRef.current = foundId;
     if (foundId) {
       const zone = zonesRef.current.find(z => z.id === foundId);
-      if (zone) playZone(zone, songsRef.current);
+      if (zone) {
+        let resolved = zone;
+        if (zone.playlistId) {
+          const pl = playlistsRef.current.find(p => p.id === zone.playlistId);
+          if (pl) resolved = { ...zone, playlist: pl.songs ?? [] };
+        }
+        playZone(resolved, songsRef.current);
+      }
     } else {
       stopAudio();
     }
@@ -589,7 +582,9 @@ export function AudioMap() {
             zone={selectedZone}
             color={selectedColor}
             songs={songs}
+            playlists={playlists}
             onUpdate={updated => setZones(prev => prev.map(z => z.id === updated.id ? updated : z))}
+            onUpdatePlaylist={updated => setPlaylists(prev => prev.map(p => p.id === updated.id ? updated : p))}
             onDelete={async () => {
               await deleteRoomZone(currentRoom.id, selectedZone.id);
               setZones(prev => prev.filter(z => z.id !== selectedZone.id));
