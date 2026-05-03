@@ -7,7 +7,7 @@ export function LoginPage() {
   const { loginWithGoogle } = useAuth();
 
   function loginWithDiscord() {
-    window.location.href = '/auth/discord';
+    window.location.href = `${import.meta.env.VITE_SERVER_URL ?? ''}/auth/discord`;
   }
 
   return (

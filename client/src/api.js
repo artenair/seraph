@@ -47,8 +47,10 @@ async function authFetch(url, options = {}) {
   return data;
 }
 
+const SERVER_URL = import.meta.env.VITE_SERVER_URL ?? '';
+
 export const addRoomSong = (roomId, url, message = '') =>
-  authFetch(`/api/rooms/${roomId}/songs`, { method: 'POST', body: JSON.stringify({ url, message }) });
+  authFetch(`${SERVER_URL}/api/rooms/${roomId}/songs`, { method: 'POST', body: JSON.stringify({ url, message }) });
 
 function songEvent(roomId, payload) {
   return set(rtdbRef(rtdb, `rooms/${roomId}/songEvent`), { ...payload, ts: Date.now() });

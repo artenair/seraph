@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signInWithPopup, signInWithCustomToken, signOut } from 'firebase/auth';
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, googleProvider } from '@/lib/firebase.js';
@@ -11,6 +11,9 @@ export function AuthProvider({ children }) {
   const [suggestedName,   setSuggestedName]   = useState('');
   const [loading,         setLoading]         = useState(true);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  const awaitingDiscordRef = useRef(
+    !!new URLSearchParams(window.location.search).get('discordToken')
+  );
 
   // Handle Discord redirect token
   useEffect(() => {
@@ -31,6 +34,8 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!firebaseUser && awaitingDiscordRef.current) return;
+      awaitingDiscordRef.current = false;
       if (firebaseUser) {
         const ref      = doc(db, 'users', firebaseUser.uid);
         const snapshot = await getDoc(ref);

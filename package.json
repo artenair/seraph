@@ -6,7 +6,8 @@
     "dev": "concurrently \"node server/index.js\" \"npm run dev --prefix client\"",
     "server": "node server/index.js",
     "client": "npm run dev --prefix client",
-    "build": "npm run build --prefix client"
+    "build": "npm run build --prefix client",
+    "deploy": "npm run build --prefix client && firebase deploy --only hosting --config client/firebase.json"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
