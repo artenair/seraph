@@ -1,0 +1,7 @@
+node_modules/
+.cache/
+audio_cache/
+service-account.json
+essentia_models/
+larger_clap_music_onnx/
+embed_songs.log

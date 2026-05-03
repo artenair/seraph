@@ -1,0 +1,7 @@
+torch
+transformers>=4.30.0
+librosa
+soundfile
+firebase-admin
+numpy
+rich
