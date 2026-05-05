@@ -32,15 +32,11 @@ function useSuggestions(playlistSongs, candidateSongs) {
     const dim   = withEmbedding[0].embedding.length;
     const query = averageEmbedding(withEmbedding.map(s => s.embedding));
 
-    const ranked = candidateSongs
+    return candidateSongs
       .filter(s => s.embedding?.length === dim)
-      .map(s => ({ song: s, score: dotProduct(query, s.embedding) }))
-      .sort((a, b) => b.score - a.score);
-
-    const max = ranked[0]?.score ?? 1;
-    return ranked
-      .map(({ song, score }) => ({ song, pct: Math.round((score / max) * 100) }))
-      .filter(({ pct }) => pct >= 60);
+      .map(s => ({ song: s, pct: Math.round(dotProduct(query, s.embedding) * 100) }))
+      .filter(({ pct }) => pct >= 75)
+      .sort((a, b) => b.pct - a.pct);
   }, [playlistSongs, candidateSongs]);
 }
 
@@ -106,7 +102,7 @@ export function PlaylistEditorDialog({ open, onClose, playlist, songs, onUpdate 
   const displayedLibrary = view === 'suggested'
     ? suggestions.map(({ song }) => song)
     : librarySongs;
-  const scoreOf = song => suggestions.find(s => s.song.id === song.id)?.pct ?? null;
+  const scoreOf = song => suggestions.find(s => s.song?.id === song.id)?.pct ?? null;
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>

@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import { createServer } from 'http';
 import express from 'express';
+import cors from 'cors';
 import admin from 'firebase-admin';
 
 const port = process.env.PORT ?? 3001;
@@ -102,6 +103,7 @@ async function fetchPlaylistVideoIds(playlistId) {
 const app    = express();
 const server = createServer(app);
 
+app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173' }));
 app.use(express.json());
 
 // -- Room songs
