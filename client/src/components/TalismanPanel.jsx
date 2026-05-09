@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { getLocalStorage, inputBase } from '../lib/utils.js';
 import { useRoom } from '../context/RoomContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import { createRoomTalisman, updateRoomTalisman, deleteRoomTalisman } from '../api.js';
 import { Button } from '@/components/ui/button';
 import { Eye, EyeOff, Copy, ChevronDown, Pin, PinOff } from 'lucide-react';
@@ -107,7 +108,7 @@ function DuplicateModal({ defaultName, onConfirm, onCancel }) {
   );
 }
 
-function TalismanCard({ talisman, onSetSlashes, onSetTotal, onDelete, onRename, onToggleHidden, onTogglePinned, onDuplicate, isLocal, onDragStart, onDragOver, onDrop, dragging }) {
+function TalismanCard({ talisman, onSetSlashes, onSetTotal, onDelete, onRename, onToggleHidden, onTogglePinned, onDuplicate, onAssignOwner, canAdmin, canEdit, members, onDragStart, onDragEnd, onDragOver, onDrop, dragging }) {
   const broken = talisman.slashes >= talisman.total_slashes;
   const [editing, setEditing] = useState(false);
   const [draft,   setDraft]   = useState('');
@@ -118,26 +119,28 @@ function TalismanCard({ talisman, onSetSlashes, onSetTotal, onDelete, onRename, 
     setEditing(false);
   }
 
+  const ownerName = talisman.ownerId
+    ? (members.find(m => m.userId === talisman.ownerId)?.displayName ?? 'Unknown')
+    : null;
+
   return (
     <div
-      draggable
-      onDragStart={onDragStart}
       onDragOver={e => { e.preventDefault(); onDragOver?.(); }}
       onDrop={onDrop}
       className={`border p-3 transition-opacity ${broken ? 'border-destructive/60 bg-destructive/5' : 'border-border bg-muted/20'} ${dragging || talisman.hidden ? 'opacity-40' : 'opacity-100'}`}>
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <span className="text-muted-foreground cursor-grab select-none text-base leading-none">⠿</span>
-          {isLocal && editing
+          {canAdmin && <span draggable onDragStart={onDragStart} onDragEnd={onDragEnd} className="text-muted-foreground cursor-grab select-none text-base leading-none">⠿</span>}
+          {canAdmin && editing
             ? <input autoFocus type="text" value={draft}
                 onChange={e => setDraft(e.target.value)}
                 onBlur={commitEdit}
                 onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditing(false); }}
                 className="bg-transparent border-b border-primary text-sm font-medium text-foreground outline-none w-40" />
             : <span
-                className={`text-sm font-medium ${broken ? 'text-destructive line-through' : 'text-foreground'} ${isLocal ? 'cursor-pointer hover:text-primary transition-colors' : ''}`}
-                onClick={isLocal ? startEdit : undefined}>
-                {talisman.name}
+                className={`text-sm font-medium ${broken ? 'text-destructive line-through' : 'text-foreground'} ${canAdmin ? 'cursor-pointer hover:text-primary transition-colors' : ''}`}
+                onClick={canAdmin ? startEdit : undefined}>
+                {ownerName && <span className="text-muted-foreground font-normal">[{ownerName}]</span>}{ownerName ? ' ' : ''}{talisman.name}
               </span>
           }
         </div>
@@ -145,7 +148,7 @@ function TalismanCard({ talisman, onSetSlashes, onSetTotal, onDelete, onRename, 
           <span className="text-xs text-muted-foreground tabular-nums">
             {talisman.slashes}/{talisman.total_slashes}
           </span>
-          {isLocal && (
+          {canAdmin && (
             <>
               <button type="button" onClick={onDuplicate}
                 className="text-muted-foreground/40 hover:text-primary transition-colors leading-none">
@@ -160,7 +163,7 @@ function TalismanCard({ talisman, onSetSlashes, onSetTotal, onDelete, onRename, 
         </div>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
-        {isLocal && (
+        {canAdmin && (
           <>
             <button type="button" onClick={onTogglePinned}
               className={`transition-colors ${talisman.pinned ? 'text-primary' : 'text-foreground hover:text-primary'}`}>
@@ -178,26 +181,51 @@ function TalismanCard({ talisman, onSetSlashes, onSetTotal, onDelete, onRename, 
           const cls = `w-7 h-7 border-2 ${filled
             ? broken ? 'bg-destructive/60 border-destructive' : 'bg-primary border-primary'
             : 'bg-muted/30 border-muted-foreground/60'}`;
-          return isLocal
+          return canEdit
             ? <button key={i} type="button"
                 onClick={() => onSetSlashes(i + 1 === talisman.slashes ? i : i + 1)}
                 className={`${cls} transition-colors hover:border-primary/50`} />
             : <div key={i} className={cls} />;
         })}
       </div>
+      {canAdmin && (
+        <div className="flex items-center gap-2 mt-3 pt-2 border-t border-border/50">
+          <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">Owner</span>
+          <select
+            value={talisman.ownerId ?? ''}
+            onChange={e => onAssignOwner(e.target.value || null)}
+            className={`${input} px-1.5 py-0.5 text-xs flex-1`}>
+            <option value="">— None —</option>
+            {members.map(m => (
+              <option key={m.userId} value={m.userId}>{m.displayName ?? m.userId}</option>
+            ))}
+          </select>
+          {ownerName && (
+            <span className="text-xs text-muted-foreground truncate">{ownerName}</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 export function TalismanPanel({ talismans }) {
-  const { isAdmin, currentRoom } = useRoom();
+  const { isAdmin, currentRoom, members } = useRoom();
+  const { user } = useAuth();
   const [name,         setName]         = useState('');
   const [totalSlashes, setTotalSlashes] = useState(4);
-  const [creating,     setCreating]     = useState(false);
-  const [startHidden,  setStartHidden]  = useState(false);
+  const [creating,      setCreating]      = useState(false);
+  const [startHidden,   setStartHidden]   = useState(false);
+  const [startPinned,   setStartPinned]   = useState(false);
+  const [startOwnerId,  setStartOwnerId]  = useState('');
   const [duplicating,  setDuplicating]  = useState(null);
-  const [filter,       setFilter]       = useState('');
-  const [selectedTags, setSelectedTags] = useState([]);
+  const [filter,        setFilter]        = useState('');
+  const [selectedOwner, setSelectedOwner] = useState('');
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    setSelectedOwner(isAdmin ? '' : user.uid);
+  }, [isAdmin, user?.uid]);
   const [orderedIds,   setOrderedIds]   = useState(() => {
     return getLocalStorage('talisman-order', []);
   });
@@ -218,7 +246,11 @@ export function TalismanPanel({ talismans }) {
 
   const ordered = orderedIds.map(id => talismans.find(t => t.id === id)).filter(Boolean);
 
-  const allTags = [...new Set(talismans.flatMap(t => extractTags(t.name)))].sort();
+  const ownerIds = [...new Set([
+    ...talismans.map(t => t.ownerId).filter(Boolean),
+    ...(!isAdmin && user?.uid ? [user.uid] : []),
+  ])];
+  const ownerMembers = ownerIds.map(id => members.find(m => m.userId === id)).filter(Boolean);
 
   function handleDrop(targetId) {
     const from = dragId.current;
@@ -231,15 +263,16 @@ export function TalismanPanel({ talismans }) {
       next.splice(ti, 0, from);
       return next;
     });
-    dragId.current = null;
   }
 
   async function handleCreate() {
     if (!name.trim()) return;
     setCreating(true);
     try {
-      await createRoomTalisman(currentRoom.id, { name: name.trim(), totalSlashes, hidden: startHidden });
+      await createRoomTalisman(currentRoom.id, { name: name.trim(), totalSlashes, hidden: startHidden, pinned: startPinned, ownerId: startOwnerId || null });
       setName('');
+      setStartPinned(false);
+      setStartOwnerId('');
     } finally {
       setCreating(false);
     }
@@ -271,6 +304,10 @@ export function TalismanPanel({ talismans }) {
     await deleteRoomTalisman(currentRoom.id, id);
   }
 
+  async function handleAssignOwner(id, ownerId) {
+    await updateRoomTalisman(currentRoom.id, getTalisman(id), { ownerId: ownerId ?? null });
+  }
+
   async function handleDuplicateConfirm(name) {
     const src = duplicating;
     setDuplicating(null);
@@ -289,12 +326,21 @@ export function TalismanPanel({ talismans }) {
           placeholder="Filter…"
           className={`${input} px-2.5 py-1.5 flex-1`}
         />
-        {allTags.length > 0 && (
-          <TagSelect tags={allTags} selected={selectedTags} onChange={setSelectedTags} />
+        {ownerMembers.length > 0 && (
+          <select
+            value={selectedOwner}
+            onChange={e => setSelectedOwner(e.target.value)}
+            className={`${input} px-2 py-1.5 text-sm`}>
+            <option value="">All owners</option>
+            {ownerMembers.map(m => (
+              <option key={m.userId} value={m.userId}>{m.displayName ?? m.userId}</option>
+            ))}
+          </select>
         )}
       </div>
 
       {isAdmin && (
+        <>
         <div className="flex gap-3 items-end mb-6">
           <div className="flex-1">
             <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground mb-1">Name</p>
@@ -311,14 +357,31 @@ export function TalismanPanel({ talismans }) {
             <p className="text-[0.65rem] uppercase tracking-wider text-muted-foreground mb-1">Slashes</p>
             <Stepper value={totalSlashes} min={1} max={12} onChange={setTotalSlashes} />
           </div>
+          <button type="button" onClick={() => setStartPinned(p => !p)}
+            className={`transition-colors self-end pb-1.5 ${startPinned ? 'text-primary' : 'text-foreground hover:text-primary'}`}>
+            {startPinned ? <PinOff size={24} /> : <Pin size={24} />}
+          </button>
           <button type="button" onClick={() => setStartHidden(h => !h)}
             className="text-foreground hover:text-primary transition-colors self-end pb-1.5">
             {startHidden ? <EyeOff size={24} /> : <Eye size={24} />}
           </button>
-          <Button onClick={handleCreate} disabled={creating || !name.trim()}>
+        </div>
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-[0.6rem] uppercase tracking-wider text-muted-foreground">Owner</span>
+          <select
+            value={startOwnerId}
+            onChange={e => setStartOwnerId(e.target.value)}
+            className={`${input} px-2 py-1 text-xs`}>
+            <option value="">— None —</option>
+            {members.map(m => (
+              <option key={m.userId} value={m.userId}>{m.displayName ?? m.userId}</option>
+            ))}
+          </select>
+          <Button className="ml-auto" onClick={handleCreate} disabled={creating || !name.trim()}>
             {creating ? '…' : 'Add'}
           </Button>
         </div>
+        </>
       )}
 
       <div className="flex flex-col gap-2">
@@ -326,15 +389,18 @@ export function TalismanPanel({ talismans }) {
           if (!isAdmin && t.hidden) return false;
           if (t.pinned) return true;
           if (filter && !t.name.toLowerCase().includes(filter.toLowerCase())) return false;
-          if (selectedTags.length > 0 && !selectedTags.some(tag => extractTags(t.name).includes(tag))) return false;
+          if (selectedOwner && t.ownerId !== selectedOwner) return false;
           return true;
         }).sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)).map(t => (
           <TalismanCard
             key={t.id}
             talisman={t}
-            isLocal={isAdmin}
+            canAdmin={isAdmin}
+            canEdit={isAdmin || t.ownerId === user?.uid}
+            members={members}
             dragging={dragId.current === t.id}
             onDragStart={() => { dragId.current = t.id; }}
+            onDragEnd={() => { dragId.current = null; }}
             onDragOver={() => { if (dragId.current && dragId.current !== t.id) handleDrop(t.id); }}
             onDrop={() => handleDrop(t.id)}
             onSetSlashes={slashes => handleSetSlashes(t.id, slashes)}
@@ -344,6 +410,7 @@ export function TalismanPanel({ talismans }) {
             onTogglePinned={() => handleTogglePinned(t.id, t.pinned)}
             onDelete={() => handleDelete(t.id)}
             onDuplicate={() => setDuplicating(t)}
+            onAssignOwner={ownerId => handleAssignOwner(t.id, ownerId)}
           />
         ))}
       </div>

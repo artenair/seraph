@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useRoom } from '@/context/RoomContext.jsx';
 import { useAuth } from '@/context/AuthContext.jsx';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet.jsx';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, UserMinus } from 'lucide-react';
 
 const ROLES = ['Admin', 'Exorcist', 'DJ'];
 
@@ -46,7 +46,7 @@ function RoleBadge({ role, active, onClick, disabled }) {
 
 export function RoomSettings({ open, onClose }) {
   const { user } = useAuth();
-  const { currentRoom, members, presenceList, isAdmin, isOwner, assignRole, removeRole, leaveRoom, deleteRoom } = useRoom();
+  const { currentRoom, members, presenceList, isAdmin, isOwner, assignRole, removeRole, kickMember, leaveRoom, deleteRoom } = useRoom();
 
   if (!currentRoom) return null;
 
@@ -110,6 +110,14 @@ export function RoomSettings({ open, onClose }) {
                       <span className="ml-2 text-xs text-muted-foreground">(you)</span>
                     )}
                   </span>
+                  {isAdmin && member.userId !== user?.uid && member.userId !== currentRoom.ownerId && (
+                    <button
+                      onClick={() => { if (confirm(`Kick ${member.displayName || 'this user'}?`)) kickMember(member.userId); }}
+                      title="Kick"
+                      className="ml-auto text-muted-foreground/40 hover:text-destructive transition-colors">
+                      <UserMinus size={14} />
+                    </button>
+                  )}
                 </div>
                 <div className="flex gap-1.5 flex-wrap">
                   {ROLES.map(role => (

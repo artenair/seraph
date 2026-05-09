@@ -172,6 +172,14 @@ export function RoomProvider({ children }) {
     localStorage.removeItem('lastRoomId');
   }
 
+  async function kickMember(userId) {
+    if (!currentRoom || !isAdmin) return;
+    await Promise.all([
+      deleteDoc(doc(db, 'rooms', currentRoom.id, 'members', userId)),
+      deleteDoc(doc(db, 'users', userId, 'rooms', currentRoom.id)),
+    ]);
+  }
+
   async function assignRole(userId, role) {
     await updateDoc(doc(db, 'rooms', currentRoom.id, 'members', userId), {
       roles: arrayUnion(role),
@@ -193,7 +201,7 @@ export function RoomProvider({ children }) {
       currentRoom, userRoles, userRooms, members, presenceList,
       roomsLoaded, isAdmin, isDJ, isOwner,
       createRoom, joinRoom, switchRoom: selectRoom,
-      assignRole, removeRole, leaveRoom, deleteRoom,
+      assignRole, removeRole, kickMember, leaveRoom, deleteRoom,
     }}>
       {children}
     </RoomContext.Provider>

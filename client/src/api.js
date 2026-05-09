@@ -112,9 +112,9 @@ function talismanEvent(roomId, payload) {
   return set(rtdbRef(rtdb, `rooms/${roomId}/talismanEvent`), { ...payload, ts: Date.now() });
 }
 
-export const createRoomTalisman = async (roomId, { name, totalSlashes, hidden }) => {
+export const createRoomTalisman = async (roomId, { name, totalSlashes, hidden, pinned, ownerId }) => {
   const { addDoc } = await import('firebase/firestore');
-  const data     = { name, slashes: 0, total_slashes: totalSlashes, hidden: !!hidden, pinned: false, createdAt: Date.now() };
+  const data     = { name, slashes: 0, total_slashes: totalSlashes, hidden: !!hidden, pinned: !!pinned, ownerId: ownerId ?? null, createdAt: Date.now() };
   const ref      = await addDoc(collection(db, 'rooms', roomId, 'talismans'), data);
   const talisman = { id: ref.id, ...data };
   await talismanEvent(roomId, { type: 'talisman_created', talisman });
