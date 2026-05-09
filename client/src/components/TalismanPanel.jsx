@@ -4,72 +4,8 @@ import { useRoom } from '../context/RoomContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { createRoomTalisman, updateRoomTalisman, deleteRoomTalisman } from '../api.js';
 import { Button } from '@/components/ui/button';
-import { Eye, EyeOff, Copy, ChevronDown, Pin, PinOff } from 'lucide-react';
-
-const input = inputBase;
-
-function extractTags(name) {
-  return [...name.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
-}
-
-function TagSelect({ tags, selected, onChange }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function handler(e) { if (!ref.current?.contains(e.target)) setOpen(false); }
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [open]);
-
-  function toggle(tag) {
-    onChange(selected.includes(tag) ? selected.filter(t => t !== tag) : [...selected, tag]);
-  }
-
-  const label = selected.length === 0 ? 'Tags' : selected.length === 1 ? selected[0] : `${selected.length} tags`;
-
-  return (
-    <div ref={ref} className="relative">
-      <button type="button" onClick={() => setOpen(o => !o)}
-        className={`${input} flex items-center gap-1.5 px-2.5 py-1.5 whitespace-nowrap ${selected.length ? 'text-foreground' : 'text-muted-foreground'}`}>
-        {label}
-        <ChevronDown size={13} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && tags.length > 0 && (
-        <div className="absolute z-20 top-full mt-1 left-0 min-w-full bg-background border border-border shadow-md flex flex-col">
-          {tags.map(tag => (
-            <label key={tag} className="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-muted/40 select-none">
-              <input type="checkbox" checked={selected.includes(tag)} onChange={() => toggle(tag)}
-                className="accent-primary" />
-              {tag}
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Stepper({ value, onChange, min = 0, max }) {
-  return (
-    <div className="flex items-center border border-border bg-muted/50">
-      <button type="button"
-        onClick={() => onChange(Math.max(min, value - 1))}
-        disabled={value <= min}
-        className="px-2 py-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors select-none">
-        −
-      </button>
-      <span className="w-6 text-center text-sm text-foreground tabular-nums">{value}</span>
-      <button type="button"
-        onClick={() => onChange(max !== undefined ? Math.min(max, value + 1) : value + 1)}
-        disabled={max !== undefined && value >= max}
-        className="px-2 py-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors select-none">
-        +
-      </button>
-    </div>
-  );
-}
+import { Stepper } from './Stepper.jsx';
+import { Eye, EyeOff, Copy, Pin, PinOff } from 'lucide-react';
 
 function DuplicateModal({ defaultName, onConfirm, onCancel }) {
   const [draft, setDraft] = useState(defaultName);
@@ -95,7 +31,7 @@ function DuplicateModal({ defaultName, onConfirm, onCancel }) {
           value={draft}
           onChange={e => setDraft(e.target.value)}
           onKeyDown={handleKeyDown}
-          className={`${input} px-2.5 py-1.5 w-full`}
+          className={`${inputBase} px-2.5 py-1.5 w-full`}
         />
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onCancel}>Cancel</Button>
@@ -108,7 +44,7 @@ function DuplicateModal({ defaultName, onConfirm, onCancel }) {
   );
 }
 
-function TalismanCard({ talisman, onSetSlashes, onSetTotal, onDelete, onRename, onToggleHidden, onTogglePinned, onDuplicate, onAssignOwner, canAdmin, canEdit, members, onDragStart, onDragEnd, onDragOver, onDrop, dragging }) {
+function TalismanCard({ talisman, onSetSlashes, onSetTotal, onDelete, onRename, onToggleHidden, onTogglePinned, onDuplicate, onAssignOwner, canAdmin, canEdit, members, memberMap, onDragStart, onDragEnd, onDragOver, onDrop, dragging }) {
   const broken = talisman.slashes >= talisman.total_slashes;
   const [editing, setEditing] = useState(false);
   const [draft,   setDraft]   = useState('');
@@ -120,7 +56,7 @@ function TalismanCard({ talisman, onSetSlashes, onSetTotal, onDelete, onRename, 
   }
 
   const ownerName = talisman.ownerId
-    ? (members.find(m => m.userId === talisman.ownerId)?.displayName ?? 'Unknown')
+    ? (memberMap?.get(talisman.ownerId)?.displayName ?? 'Unknown')
     : null;
 
   return (
@@ -194,7 +130,7 @@ function TalismanCard({ talisman, onSetSlashes, onSetTotal, onDelete, onRename, 
           <select
             value={talisman.ownerId ?? ''}
             onChange={e => onAssignOwner(e.target.value || null)}
-            className={`${input} px-1.5 py-0.5 text-xs flex-1`}>
+            className={`${inputBase} px-1.5 py-0.5 text-xs flex-1`}>
             <option value="">— None —</option>
             {members.map(m => (
               <option key={m.userId} value={m.userId}>{m.displayName ?? m.userId}</option>
@@ -246,11 +182,12 @@ export function TalismanPanel({ talismans }) {
 
   const ordered = orderedIds.map(id => talismans.find(t => t.id === id)).filter(Boolean);
 
+  const memberMap = new Map(members.map(m => [m.userId, m]));
   const ownerIds = [...new Set([
     ...talismans.map(t => t.ownerId).filter(Boolean),
     ...(!isAdmin && user?.uid ? [user.uid] : []),
   ])];
-  const ownerMembers = ownerIds.map(id => members.find(m => m.userId === id)).filter(Boolean);
+  const ownerMembers = ownerIds.map(id => memberMap.get(id)).filter(Boolean);
 
   function handleDrop(targetId) {
     const from = dragId.current;
@@ -324,13 +261,13 @@ export function TalismanPanel({ talismans }) {
           value={filter}
           onChange={e => setFilter(e.target.value)}
           placeholder="Filter…"
-          className={`${input} px-2.5 py-1.5 flex-1`}
+          className={`${inputBase} px-2.5 py-1.5 flex-1`}
         />
         {ownerMembers.length > 0 && (
           <select
             value={selectedOwner}
             onChange={e => setSelectedOwner(e.target.value)}
-            className={`${input} px-2 py-1.5 text-sm`}>
+            className={`${inputBase} px-2 py-1.5 text-sm`}>
             <option value="">All owners</option>
             {ownerMembers.map(m => (
               <option key={m.userId} value={m.userId}>{m.displayName ?? m.userId}</option>
@@ -350,7 +287,7 @@ export function TalismanPanel({ talismans }) {
               onChange={e => setName(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleCreate()}
               placeholder="Talisman name…"
-              className={`${input} px-2.5 py-1.5 w-full`}
+              className={`${inputBase} px-2.5 py-1.5 w-full`}
             />
           </div>
           <div>
@@ -371,7 +308,7 @@ export function TalismanPanel({ talismans }) {
           <select
             value={startOwnerId}
             onChange={e => setStartOwnerId(e.target.value)}
-            className={`${input} px-2 py-1 text-xs`}>
+            className={`${inputBase} px-2 py-1 text-xs`}>
             <option value="">— None —</option>
             {members.map(m => (
               <option key={m.userId} value={m.userId}>{m.displayName ?? m.userId}</option>
@@ -398,6 +335,7 @@ export function TalismanPanel({ talismans }) {
             canAdmin={isAdmin}
             canEdit={isAdmin || t.ownerId === user?.uid}
             members={members}
+            memberMap={memberMap}
             dragging={dragId.current === t.id}
             onDragStart={() => { dragId.current = t.id; }}
             onDragEnd={() => { dragId.current = null; }}

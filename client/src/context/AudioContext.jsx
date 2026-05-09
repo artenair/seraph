@@ -1,5 +1,5 @@
 import { createContext, useContext, useRef, useState, useEffect } from 'react';
-import { fetchRoomZones, fetchRoomSongs } from '../api.js';
+import { fetchRoomZones, fetchRoomSongs, fetchRoomPlaylists } from '../api.js';
 import { getLocalStorage, zonePlaylist, extractYtId } from '../lib/utils.js';
 import { ref as rtdbRef, set, get, remove, onValue } from 'firebase/database';
 import { rtdb } from '../lib/firebase.js';
@@ -40,10 +40,8 @@ export function AudioProvider({ children }) {
   const [clientMuted,    setClientMuted]    = useState(true);
   const clientMutedRef  = useRef(true);
 
-  // Keep refs in sync
   useEffect(() => { currentRoomRef.current = currentRoom; }, [currentRoom]);
 
-  // Update isDJRef and auto-unmute DJ on first role load
   useEffect(() => {
     isDJRef.current = isDJ;
     if (isDJ && !hasAutoUnmutedRef.current) {
@@ -77,12 +75,17 @@ export function AudioProvider({ children }) {
   function getActivePlayer()   { return activePlayerRef.current === 'a' ? playerARef.current : playerBRef.current; }
   function getInactivePlayer() { return activePlayerRef.current === 'a' ? playerBRef.current : playerARef.current; }
 
+  const lastTimeRef = useRef(0);
+
   function startPolling() {
     if (pollRef.current) return;
     pollRef.current = setInterval(() => {
       try {
         const ct = getActivePlayer()?.getCurrentTime() ?? 0;
-        setCurrentTime(ct);
+        if (Math.abs(ct - lastTimeRef.current) > 0.1) {
+          lastTimeRef.current = ct;
+          setCurrentTime(ct);
+        }
         maybeCrossfade();
       } catch {}
     }, 250);
@@ -94,12 +97,17 @@ export function AudioProvider({ children }) {
     pollRef.current = null;
   }
 
+  function resolveZone(zone, playlists) {
+    if (!zone?.playlistId) return zone;
+    const pl = playlists.find(p => p.id === zone.playlistId);
+    return pl ? { ...zone, playlist: pl.songs ?? [] } : zone;
+  }
+
   function whenReady(fn) {
     if (ytReadyRef.current) fn();
     else pendingPlayRef.current = fn;
   }
 
-  // ── YouTube IFrame API init ────────────────────────────────────────────────────
 
   useEffect(() => {
     let active     = true;
@@ -203,7 +211,6 @@ export function AudioProvider({ children }) {
     }
   }
 
-  // ── Autoplay unlock ────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const unlock = () => {
@@ -235,7 +242,6 @@ export function AudioProvider({ children }) {
     });
   }
 
-  // ── Volume ─────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (ytReadyRef.current && !crossfadeRef.current) {
@@ -244,7 +250,6 @@ export function AudioProvider({ children }) {
     localStorage.setItem('audiomap-volume', volume);
   }, [volume]);
 
-  // ── Crossfade ──────────────────────────────────────────────────────────────────
 
   function cancelCrossfade() {
     const cf = crossfadeRef.current;
@@ -340,7 +345,6 @@ export function AudioProvider({ children }) {
     } catch {}
   }
 
-  // ── Seek ───────────────────────────────────────────────────────────────────────
 
   function seek(time, remote = false) {
     try { getActivePlayer()?.seekTo(time, true); } catch {}
@@ -348,7 +352,6 @@ export function AudioProvider({ children }) {
     if (!remote && !suppressRef.current) sendCmd({ action: 'seek', time });
   }
 
-  // ── RTDB audio commands ────────────────────────────────────────────────────────
 
   function handleAudioCmd(msg) {
     if (!msg) return;
@@ -368,9 +371,14 @@ export function AudioProvider({ children }) {
       if (msg.crossfade) { suppressRef.current = false; return; }
       window.dispatchEvent(new Event('server-playing'));
       if (msg.zone_id && sessionRef.current?.zone.id !== msg.zone_id) {
-        Promise.all([fetchRoomZones(currentRoomRef.current?.id ?? ''), fetchRoomSongs(currentRoomRef.current?.id ?? '').then(ss => ss.filter(s => s.status === 'done'))])
-          .then(([zones, songs]) => {
-            const zone = zones.find(z => z.id === msg.zone_id);
+        const rid = currentRoomRef.current?.id ?? '';
+        Promise.all([
+          fetchRoomZones(rid),
+          fetchRoomSongs(rid).then(ss => ss.filter(s => s.status === 'done')),
+          fetchRoomPlaylists(rid),
+        ]).then(([zones, songs, playlists]) => {
+            const rawZone = zones.find(z => z.id === msg.zone_id);
+            const zone    = rawZone ? resolveZone(rawZone, playlists) : null;
             if (zone) playTrack(zone, songs, msg.index, msg.time ?? 0);
           });
       } else {
@@ -380,6 +388,9 @@ export function AudioProvider({ children }) {
     suppressRef.current = false;
   }
 
+  const handleAudioCmdRef = useRef(handleAudioCmd);
+  useEffect(() => { handleAudioCmdRef.current = handleAudioCmd; });
+
   // Listen to live audio commands (play, pause, seek, track changes)
   useEffect(() => {
     if (!currentRoom?.id) return;
@@ -388,7 +399,7 @@ export function AudioProvider({ children }) {
     const unsub     = onValue(cmdRef, snapshot => {
       const msg = snapshot.val();
       if (!firstCall.seen) { firstCall.seen = true; if (isDJRef.current) return; }
-      handleAudioCmd(msg);
+      handleAudioCmdRef.current(msg);
     });
     return unsub;
   }, [currentRoom?.id]);
@@ -408,12 +419,12 @@ export function AudioProvider({ children }) {
     const s = sessionRef.current;
     if (!s) return;
     const ct = (() => { try { return getActivePlayer()?.getCurrentTime() ?? 0; } catch { return 0; } })();
+    const dur = (() => { try { return getActivePlayer()?.getDuration() ?? 0; } catch { return 0; } })();
     set(rtdbRef(rtdb, `rooms/${roomId}/audioState`), {
-      zone_id: s.zone.id, index: s.index, time: ct, sentAt: Date.now(),
+      zone_id: s.zone.id, index: s.index, time: ct, duration: isFinite(dur) ? dur : 0, sentAt: Date.now(),
     });
   }
 
-  // ── Playback ───────────────────────────────────────────────────────────────────
 
   function playTrack(zone, songs, index, startTime = 0) {
     cancelCrossfade();
@@ -434,6 +445,7 @@ export function AudioProvider({ children }) {
     setCurrentIndex(resolvedIndex);
     setPlaylistSongs(playlist.map(id => songs.find(s => s.id === id)).filter(Boolean));
     setIsPlaying(true);
+    isPlayingRef.current = true;
 
     try {
       player.setVolume(volumeRef.current * 100);
@@ -590,9 +602,12 @@ export function AudioProvider({ children }) {
       const s = sessionRef.current;
       if (!s || !isDJRef.current) return;
       try {
-        const ct = getActivePlayer()?.getCurrentTime() ?? 0;
-        zoneMemoryRef.current[s.zone.id] = { index: s.index, time: ct };
-        localStorage.setItem('audiomap-zone-memory', JSON.stringify(zoneMemoryRef.current));
+        const ct  = getActivePlayer()?.getCurrentTime() ?? 0;
+        const prev = zoneMemoryRef.current[s.zone.id];
+        if (!prev || prev.index !== s.index || Math.abs((prev.time ?? 0) - ct) > 1) {
+          zoneMemoryRef.current[s.zone.id] = { index: s.index, time: ct };
+          localStorage.setItem('audiomap-zone-memory', JSON.stringify(zoneMemoryRef.current));
+        }
       } catch {}
       sendState();
     }, 5000);
@@ -616,21 +631,38 @@ export function AudioProvider({ children }) {
       // Sync from DJ's latest position
       const roomId = currentRoomRef.current?.id;
       if (roomId) {
-        get(rtdbRef(rtdb, `rooms/${roomId}/audioState`)).then(snapshot => {
-          const state = snapshot.val();
-          if (!state) return;
-          const elapsed      = state.sentAt ? (Date.now() - state.sentAt) / 1000 : 0;
-          const { zone_id, index, time } = state;
-          Promise.all([
-            fetchRoomZones(currentRoomRef.current?.id ?? ''),
-            fetchRoomSongs(currentRoomRef.current?.id ?? '').then(ss => ss.filter(s => s.status === 'done')),
-          ]).then(([zones, songs]) => {
-            // Recalculate elapsed after fetch to stay accurate
-            const totalElapsed  = state.sentAt ? (Date.now() - state.sentAt) / 1000 : elapsed;
-            const adjustedTime  = Math.max(0, time + totalElapsed);
-            const zone = zone_id ? zones.find(z => z.id === zone_id) : null;
-            if (zone) playTrack(zone, songs, index, adjustedTime);
-          });
+        Promise.all([
+          get(rtdbRef(rtdb, `rooms/${roomId}/audioState`)),
+          get(rtdbRef(rtdb, `rooms/${roomId}/audioCommand`)),
+          fetchRoomZones(roomId),
+          fetchRoomSongs(roomId).then(ss => ss.filter(s => s.status === 'done')),
+          fetchRoomPlaylists(roomId),
+        ]).then(([stateSnap, cmdSnap, zones, songs, playlists]) => {
+          const state = stateSnap.val();
+          const cmd   = cmdSnap.val();
+
+          let zone_id, index, adjustedTime;
+
+          if (state) {
+            const elapsed      = state.sentAt ? (Date.now() - state.sentAt) / 1000 : 0;
+            const cap          = state.duration > 0 ? state.duration - 1 : Infinity;
+            zone_id      = state.zone_id;
+            index        = state.index;
+            adjustedTime = Math.min(Math.max(0, state.time + elapsed), cap);
+          } else if (cmd?.action === 'play_at' && cmd.zone_id) {
+            zone_id      = cmd.zone_id;
+            index        = cmd.index ?? 0;
+            adjustedTime = 0;
+          } else {
+            return;
+          }
+
+          const rawZone = zone_id ? zones.find(z => z.id === zone_id) : null;
+          const zone    = rawZone ? resolveZone(rawZone, playlists) : null;
+          if (zone) {
+            window.dispatchEvent(new Event('server-playing'));
+            whenReady(() => playTrack(zone, songs, index, adjustedTime));
+          }
         });
       }
     } else {

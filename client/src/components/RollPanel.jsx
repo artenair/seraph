@@ -6,17 +6,14 @@ import { useRoom } from '../context/RoomContext.jsx';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { inputBase } from '../lib/utils.js';
+import { STATS, DEFAULT_STATS } from '../lib/diceConstants.js';
+import { Stepper } from './Stepper.jsx';
 import { computeRoll, computeCustomRoll } from '../lib/dice.js';
 import { collection, addDoc, getDocs, query, orderBy, limit, deleteDoc, doc } from 'firebase/firestore';
 import { Trash2 } from 'lucide-react';
 import { ref as rtdbRef, set, onValue } from 'firebase/database';
 import { db, rtdb } from '../lib/firebase.js';
 
-const STATS = [
-  'force', 'conditioning', 'coordination', 'covert', 'interfacing',
-  'investigation', 'surveillance', 'negotiation', 'authority', 'connection', 'psyche',
-];
-const DEFAULT_STATS = Object.fromEntries(STATS.map(s => [s, 0]));
 const input = inputBase;
 
 const RISK_COLOR = {
@@ -26,17 +23,6 @@ const RISK_COLOR = {
   Good:     'text-green-400',
 };
 
-function Stepper({ value, onChange, min = 0, max }) {
-  return (
-    <div className="flex items-center border border-border bg-muted/50">
-      <button type="button" onClick={() => onChange(Math.max(min, value - 1))} disabled={value <= min}
-        className="px-2 py-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors select-none">−</button>
-      <span className="w-6 text-center text-sm text-foreground tabular-nums">{value}</span>
-      <button type="button" onClick={() => onChange(max !== undefined ? Math.min(max, value + 1) : value + 1)} disabled={max !== undefined && value >= max}
-        className="px-2 py-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors select-none">+</button>
-    </div>
-  );
-}
 
 function Die({ value, success, muted }) {
   return (
