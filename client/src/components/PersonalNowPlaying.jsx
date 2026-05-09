@@ -9,7 +9,7 @@ const SERVER_BAR_HEIGHT = 60;
 
 export function PersonalNowPlaying() {
   const {
-    localSong, localPlaylist, localIndex,
+    localSong, localPlaylist, localPlaylistName, localIndex,
     isPlaying, volume, setVolume, currentTime, duration,
     seek, togglePlay, stop, nextTrack, prevTrack, playPlaylist,
   } = usePersonalAudio();
@@ -26,7 +26,7 @@ export function PersonalNowPlaying() {
       {localPlaylist.map((song, i) => (
         <button
           key={song.id}
-          onClick={() => playPlaylist(localPlaylist, i)}
+          onClick={() => playPlaylist(localPlaylist, i, localPlaylistName)}
           className={`w-full flex items-center gap-3 px-4 py-2 text-left transition-colors hover:bg-muted/50 ${i === localIndex ? 'bg-muted/40' : ''}`}>
           <SongThumbnail song={song} className="w-7 h-7" />
           <div className="flex-1 min-w-0">
@@ -40,6 +40,12 @@ export function PersonalNowPlaying() {
       ))}
     </div>
   ) : null;
+
+  const playPause = (
+    <button onClick={togglePlay} className="p-1.5 text-foreground hover:text-primary transition-colors">
+      {isPlaying ? <Pause size={20} /> : <Play size={20} />}
+    </button>
+  );
 
   const center = (
     <>
@@ -59,23 +65,22 @@ export function PersonalNowPlaying() {
     </>
   );
 
+  const playlist = hasPlaylist ? (
+    <button
+      onClick={() => setDrawerOpen(v => !v)}
+      title="Playlist"
+      className={`p-1.5 transition-colors ${drawerOpen ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
+      <ListMusic size={15} />
+    </button>
+  ) : null;
+
   const right = (
-    <>
-      {hasPlaylist && (
-        <button
-          onClick={() => setDrawerOpen(v => !v)}
-          title="Playlist"
-          className={`p-1.5 transition-colors ${drawerOpen ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
-          <ListMusic size={15} />
-        </button>
-      )}
-      <button
-        onClick={stop}
-        title="Close"
-        className="p-1.5 text-muted-foreground hover:text-foreground transition-colors">
-        <X size={15} />
-      </button>
-    </>
+    <button
+      onClick={stop}
+      title="Close"
+      className="p-1.5 text-muted-foreground hover:text-foreground transition-colors">
+      <X size={15} />
+    </button>
   );
 
   return (
@@ -88,7 +93,12 @@ export function PersonalNowPlaying() {
       onVolumeChange={setVolume}
       onSeek={seek}
       subtitle={hasPlaylist ? `${localIndex + 1} / ${localPlaylist.length}` : (localSong.artist || undefined)}
+      playPause={playPause}
       center={center}
+      playlist={playlist}
+      onPlaylistOpen={() => setDrawerOpen(true)}
+      onSheetClose={() => setDrawerOpen(false)}
+      playlistName={localPlaylistName}
       right={right}
       bottom={serverBarVisible ? SERVER_BAR_HEIGHT : 0}
       zIndex={70}

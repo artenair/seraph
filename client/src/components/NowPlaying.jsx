@@ -43,6 +43,12 @@ export function NowPlaying() {
     </div>
   ) : null;
 
+  const playPause = isDJ ? (
+    <button onClick={togglePlay} className="p-1.5 text-foreground hover:text-primary transition-colors">
+      {isPlaying ? <Pause size={20} /> : <Play size={20} />}
+    </button>
+  ) : null;
+
   const center = isDJ ? (
     <>
       <button onClick={prevTrack} className="p-1.5 text-muted-foreground hover:text-foreground transition-colors">
@@ -57,15 +63,18 @@ export function NowPlaying() {
     </>
   ) : null;
 
+  const playlist = (
+    <button
+      onClick={() => setDrawerOpen(v => !v)}
+      title="Playlist"
+      className={`p-1.5 transition-colors ${drawerOpen ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+    >
+      <ListMusic size={15} />
+    </button>
+  );
+
   const right = (
     <>
-      <button
-        onClick={() => setDrawerOpen(v => !v)}
-        title="Playlist"
-        className={`p-1.5 transition-colors ${drawerOpen ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
-      >
-        <ListMusic size={15} />
-      </button>
       {isDJ && <>
         <button
           onClick={() => setLoop(v => !v)}
@@ -102,7 +111,12 @@ export function NowPlaying() {
       onVolumeChange={setVolume}
       onSeek={isDJ ? seek : null}
       subtitle={subtitle || undefined}
+      playPause={playPause}
       center={center}
+      playlist={playlist}
+      onPlaylistOpen={() => setDrawerOpen(true)}
+      onSheetClose={() => setDrawerOpen(false)}
+      playlistName={activeZoneName}
       right={right}
       bottom={0}
       zIndex={60}

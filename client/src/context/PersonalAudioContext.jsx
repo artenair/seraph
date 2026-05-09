@@ -12,9 +12,10 @@ export function PersonalAudioProvider({ children }) {
   const volumeRef    = useRef(1);
   const pollRef      = useRef(null);
 
-  const [localSong,     setLocalSong]     = useState(null);
-  const [localPlaylist, setLocalPlaylist] = useState([]);
-  const [localIndex,    setLocalIndex]    = useState(0);
+  const [localSong,         setLocalSong]         = useState(null);
+  const [localPlaylist,     setLocalPlaylist]     = useState([]);
+  const [localPlaylistName, setLocalPlaylistName] = useState(null);
+  const [localIndex,        setLocalIndex]        = useState(0);
   const [isPlaying,     setIsPlaying]     = useState(false);
   const [volume,        setVolume]        = useState(1);
   const [currentTime,   setCurrentTime]   = useState(0);
@@ -120,6 +121,7 @@ export function PersonalAudioProvider({ children }) {
       unlockedRef.current = true;
       document.removeEventListener('click',   unlock);
       document.removeEventListener('keydown', unlock);
+      if (!ytReadyRef.current) return;
       try {
         playerRef.current?.unMute();
         playerRef.current?.setVolume(volumeRef.current * 100);
@@ -134,6 +136,7 @@ export function PersonalAudioProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    if (!ytReadyRef.current) return;
     try { playerRef.current?.setVolume(volume * 100); } catch {}
   }, [volume]);
 
@@ -146,7 +149,7 @@ export function PersonalAudioProvider({ children }) {
     return () => window.removeEventListener('server-playing', handler);
   }, []);
 
-  function playPlaylist(songs, index = 0) {
+  function playPlaylist(songs, index = 0, name = null) {
     if (!songs?.length) return;
     const song = songs[index];
     if (!song?.youtube_url) return;
@@ -157,6 +160,7 @@ export function PersonalAudioProvider({ children }) {
     localPlaylistRef.current = songs;
     localIndexRef.current    = index;
     setLocalPlaylist(songs);
+    setLocalPlaylistName(name);
     setLocalIndex(index);
     setLocalSong(song);
     setCurrentTime(0);
@@ -215,7 +219,7 @@ export function PersonalAudioProvider({ children }) {
   }
 
   return (
-    <Ctx.Provider value={{ localSong, localPlaylist, localIndex, isPlaying, volume, setVolume, currentTime, duration, seek, play, playPlaylist, nextTrack, prevTrack, stop, togglePlay }}>
+    <Ctx.Provider value={{ localSong, localPlaylist, localPlaylistName, localIndex, isPlaying, volume, setVolume, currentTime, duration, seek, play, playPlaylist, nextTrack, prevTrack, stop, togglePlay }}>
       {children}
       <div style={{ position: 'fixed', width: 1, height: 1, overflow: 'hidden', bottom: 0, left: 0, pointerEvents: 'none' }}>
         <div ref={containerRef} />

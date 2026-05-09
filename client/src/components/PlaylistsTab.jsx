@@ -26,7 +26,7 @@ export function PlaylistsTab() {
     e.stopPropagation();
     if (isActive(pl)) { togglePlay(); return; }
     const resolved = resolvedSongs(pl);
-    if (resolved.length) playPlaylist(resolved, 0);
+    if (resolved.length) playPlaylist(resolved, 0, pl.name);
   }
 
   useEffect(() => {

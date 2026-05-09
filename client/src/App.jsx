@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { ActionTab } from './components/ActionTab.jsx';
 import { AudioMap } from './components/AudioMap.jsx';
 import { MusicTab }  from './components/MusicTab.jsx';
@@ -7,7 +8,7 @@ import { CharacterTab } from './components/CharacterTab.jsx';
 import { PlaylistsTab } from './components/PlaylistsTab.jsx';
 import { NowPlaying } from './components/NowPlaying.jsx';
 import { AudioProvider, useAudio } from './context/AudioContext.jsx';
-import { PersonalAudioProvider } from './context/PersonalAudioContext.jsx';
+import { PersonalAudioProvider, usePersonalAudio } from './context/PersonalAudioContext.jsx';
 import { PersonalNowPlaying } from './components/PersonalNowPlaying.jsx';
 import { PlaylistImportBar } from './components/PlaylistImportBar.jsx';
 import { inputBase } from './lib/utils.js';
@@ -18,8 +19,9 @@ import { LoginPage } from './components/LoginPage.jsx';
 import { OnboardingDialog } from './components/OnboardingDialog.jsx';
 import { RoomGate } from './components/RoomGate.jsx';
 import { RoomSettings } from './components/RoomSettings.jsx';
-import { User, Music, Bookmark, Settings, Map, Volume2, VolumeX, ListMusic } from 'lucide-react';
+import { User, Music, Bookmark, Settings, Map, Volume2, VolumeX, ListMusic, Dices } from 'lucide-react';
 import { RollPanel } from './components/RollPanel.jsx';
+import { Toaster } from 'sonner';
 
 const input = inputBase;
 
@@ -60,12 +62,94 @@ function ActivityBarAudioButtons({ tab, setTab }) {
   );
 }
 
+function BottomTabBar({ tab, setTab, rollDrawerOpen, setRollDrawerOpen, onSettingsClick }) {
+  const { clientMuted, toggleClientMute } = useAudio();
+  const { isAdmin, isDJ } = useRoom();
+
+  const active = 'text-foreground';
+  const inactive = 'text-muted-foreground';
+
+  return (
+    <div className="flex md:hidden fixed bottom-0 left-0 right-0 z-40 bg-background border-t border-border h-14">
+      {NAV_ITEMS.map(({ id, Icon, title }) => (
+        <button
+          key={id}
+          title={title}
+          onClick={() => setTab(id)}
+          className={`flex-1 flex items-center justify-center transition-colors ${tab === id ? active : inactive}`}>
+          <Icon size={20} />
+        </button>
+      ))}
+      <button
+        title="Roll Dice"
+        onClick={() => setRollDrawerOpen(true)}
+        className={`flex-1 flex items-center justify-center transition-colors ${rollDrawerOpen ? active : inactive}`}>
+        <Dices size={20} />
+      </button>
+      {isAdmin && (
+        <button
+          title="Audio Map"
+          onClick={() => setTab('audiomap')}
+          className={`flex-1 flex items-center justify-center transition-colors ${tab === 'audiomap' ? active : inactive}`}>
+          <Map size={20} />
+        </button>
+      )}
+      {!isDJ && (
+        <button
+          title={clientMuted ? 'Listen' : 'Mute'}
+          onClick={toggleClientMute}
+          className={`flex-1 flex items-center justify-center transition-colors ${inactive}`}>
+          {clientMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+        </button>
+      )}
+      <button
+        title="Settings"
+        onClick={onSettingsClick}
+        className={`flex-1 flex items-center justify-center transition-colors ${inactive}`}>
+        <Settings size={20} />
+      </button>
+    </div>
+  );
+}
+
+const TAB_BAR_H  = 56;
+const PLAYER_BAR_H = 57; // h-14 + 1px progress bar
+
+function MainContent({ tab }) {
+  const { currentSong, clientMuted } = useAudio();
+  const { localSong } = usePersonalAudio();
+
+  const serverBarVisible   = currentSong && !clientMuted;
+  const personalBarVisible = !!localSong;
+
+  const mobilePb = TAB_BAR_H
+    + (serverBarVisible   ? PLAYER_BAR_H : 0)
+    + (personalBarVisible ? PLAYER_BAR_H : 0);
+
+  if (tab === 'audiomap') {
+    return <main className="flex-1 overflow-hidden flex flex-col min-h-0" />;
+  }
+
+  return (
+    <main
+      className="flex-1 overflow-auto p-6 min-h-0 md:pb-6"
+      style={{ paddingBottom: `max(${mobilePb + 24}px, 1.5rem)` }}
+    >
+      {tab === 'character' && <CharacterTab />}
+      {tab === 'music'     && <MusicTab />}
+      {tab === 'playlists' && <PlaylistsTab />}
+      {tab === 'talismans' && <ActionTab />}
+    </main>
+  );
+}
+
 function AppContent() {
   const { displayName, logout } = useAuth();
   const { currentRoom, userRooms, roomsLoaded, switchRoom, joinRoom } = useRoom();
-  const [tab,          setTab]          = useState('talismans');
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [newRoomOpen,  setNewRoomOpen]  = useState(false);
+  const [tab,            setTab]            = useState('talismans');
+  const [settingsOpen,   setSettingsOpen]   = useState(false);
+  const [newRoomOpen,    setNewRoomOpen]    = useState(false);
+  const [rollDrawerOpen, setRollDrawerOpen] = useState(false);
 
   useEffect(() => {
     if (!roomsLoaded) return;
@@ -82,8 +166,8 @@ function AppContent() {
     <PersonalAudioProvider>
     <div className="h-screen flex bg-background text-foreground">
 
-      {/* VS Code-style activity bar */}
-      <div className="w-12 shrink-0 border-r border-border flex flex-col items-center pt-2 gap-1">
+      {/* VS Code-style activity bar — hidden on mobile */}
+      <div className="hidden md:flex w-12 shrink-0 border-r border-border flex-col items-center pt-2 gap-1">
         {NAV_ITEMS.map(({ id, Icon, title }) => (
           <button
             key={id}
@@ -135,16 +219,17 @@ function AppContent() {
 
         {/* Content + Roll Panel */}
         <div className="flex flex-1 min-h-0 overflow-hidden">
-          <main className={tab === 'audiomap'
-            ? 'flex-1 overflow-hidden flex flex-col min-h-0'
-            : 'flex-1 overflow-auto p-6 min-h-0'}>
-            {tab === 'character' && <CharacterTab />}
-            {tab === 'music'     && <MusicTab />}
-            {tab === 'playlists' && <PlaylistsTab />}
-            {tab === 'talismans' && <ActionTab />}
-            {tab === 'audiomap'  && <AudioMap />}
-          </main>
-          <RollPanel />
+          {tab === 'audiomap' ? (
+            <main className="flex-1 overflow-hidden flex flex-col min-h-0">
+              <AudioMap />
+            </main>
+          ) : (
+            <MainContent tab={tab} />
+          )}
+          {/* Desktop roll panel — kept mounted on mobile (hidden) so RTDB listener stays alive */}
+          <div className="hidden md:flex self-stretch">
+            <RollPanel />
+          </div>
         </div>
 
         <NowPlaying />
@@ -152,6 +237,22 @@ function AppContent() {
         <PlaylistImportBar />
       </div>
     </div>
+
+    {/* Mobile bottom tab bar */}
+    <BottomTabBar
+      tab={tab}
+      setTab={setTab}
+      rollDrawerOpen={rollDrawerOpen}
+      setRollDrawerOpen={setRollDrawerOpen}
+      onSettingsClick={() => setSettingsOpen(true)}
+    />
+
+    {/* Mobile roll drawer */}
+    <Sheet open={rollDrawerOpen} onOpenChange={setRollDrawerOpen}>
+      <SheetContent side="bottom" showCloseButton className="p-0 overflow-hidden" style={{ height: '100dvh', zIndex: 80 }}>
+        <RollPanel className="w-full border-l-0 h-full" />
+      </SheetContent>
+    </Sheet>
 
     <RoomSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     <Dialog open={newRoomOpen} onOpenChange={v => !v && setNewRoomOpen(false)}>
@@ -179,6 +280,7 @@ export default function App() {
   return (
     <RoomProvider>
       <AppContent />
+      <Toaster position="top-center" richColors />
     </RoomProvider>
   );
 }

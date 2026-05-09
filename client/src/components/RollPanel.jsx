@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { useLocalStore } from '../lib/localStore.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useRoom } from '../context/RoomContext.jsx';
@@ -6,7 +7,8 @@ import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { inputBase } from '../lib/utils.js';
 import { computeRoll, computeCustomRoll } from '../lib/dice.js';
-import { collection, addDoc, getDocs, query, orderBy, limit } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, orderBy, limit, deleteDoc, doc } from 'firebase/firestore';
+import { Trash2 } from 'lucide-react';
 import { ref as rtdbRef, set, onValue } from 'firebase/database';
 import { db, rtdb } from '../lib/firebase.js';
 
@@ -47,12 +49,12 @@ function Die({ value, success, muted }) {
   );
 }
 
-function RollEntry({ roll }) {
+function RollEntry({ roll, isAdmin, onDelete }) {
   const threshold = roll.threshold ?? (roll.hard ? 6 : 4);
   const isCustom  = !roll.stat;
   return (
     <div className="bg-muted/30 border border-border p-3 text-xs">
-      <div className="flex items-center gap-2 mb-2 flex-wrap">
+      <div className="flex items-center gap-2 mb-1">
         {roll.username && <span className="font-semibold text-foreground">{roll.username}</span>}
         {isCustom
           ? <span className="text-muted-foreground font-medium">
@@ -60,11 +62,20 @@ function RollEntry({ roll }) {
             </span>
           : <span className="text-muted-foreground capitalize font-medium">{roll.stat}</span>
         }
-        {roll.hard       && <span className="text-[0.6rem] uppercase tracking-wide text-yellow-400 border border-yellow-400/40 px-1.5 py-0.5">hard</span>}
-        {roll.risky      && <span className="text-[0.6rem] uppercase tracking-wide text-orange-400 border border-orange-400/40 px-1.5 py-0.5">risky</span>}
-        {roll.divineAgony && <span className="text-[0.6rem] uppercase tracking-wide text-purple-400 border border-purple-400/40 px-1.5 py-0.5">divine agony</span>}
         <span className="text-muted-foreground/50 ml-auto">{new Date(roll.createdAt ?? roll.created_at).toLocaleTimeString()}</span>
+        {isAdmin && (
+          <button onClick={onDelete} className="text-muted-foreground/40 hover:text-destructive transition-colors ml-1">
+            <Trash2 size={11} />
+          </button>
+        )}
       </div>
+      {(roll.hard || roll.risky || roll.divineAgony) && (
+        <div className="flex gap-1.5 mb-2">
+          {roll.hard        && <span className="text-[0.6rem] uppercase tracking-wide text-yellow-400 border border-yellow-400/40 px-1.5 py-0.5">hard</span>}
+          {roll.risky       && <span className="text-[0.6rem] uppercase tracking-wide text-orange-400 border border-orange-400/40 px-1.5 py-0.5">risky</span>}
+          {roll.divineAgony && <span className="text-[0.6rem] uppercase tracking-wide text-purple-400 border border-purple-400/40 px-1.5 py-0.5">divine agony</span>}
+        </div>
+      )}
       <div className="flex items-center gap-1.5 flex-wrap mb-2">
         {isCustom ? (
           <>
@@ -99,9 +110,9 @@ function RollEntry({ roll }) {
   );
 }
 
-export function RollPanel() {
+export function RollPanel({ className = 'overflow-y-auto' }) {
   const { displayName: username } = useAuth();
-  const { currentRoom } = useRoom();
+  const { currentRoom, isAdmin } = useRoom();
   const [stats,  setStats]  = useLocalStore('stats',  DEFAULT_STATS);
   const [pathos, setPathos] = useLocalStore('pathos', 0);
 
@@ -133,7 +144,24 @@ export function RollPanel() {
     const unsub = onValue(rtdbRef(rtdb, `rooms/${currentRoom.id}/rollEvent`), snapshot => {
       if (!firstCall.seen) { firstCall.seen = true; return; }
       const event = snapshot.val();
-      if (event?.roll) setRolls(prev => [event.roll, ...prev].slice(0, 50));
+      if (event?.deleted) { setRolls(prev => prev.filter(r => r.id !== event.deleted)); return; }
+      if (!event?.roll) return;
+      const roll = event.roll;
+      setRolls(prev => [roll, ...prev].slice(0, 50));
+      const isCustom = !roll.stat;
+      const who = roll.username ?? 'Someone';
+      if (isCustom) {
+        const parts = [
+          roll.d6Dice?.length && `d6: ${roll.d6Dice.join(' ')}`,
+          roll.d3Dice?.length && `d3: ${roll.d3Dice.join(' ')}`,
+        ].filter(Boolean).join('  ');
+        toast(`${who} - Custom roll`, { description: parts });
+      } else {
+        const mods   = [roll.hard && 'Hard', roll.risky && 'Risky'].filter(Boolean).join(' ');
+        const result = roll.success ? '✓ Success' : '✗ Failure';
+        const risk   = roll.riskDie != null ? ` - ${roll.riskLabel} (${roll.riskDie})` : '';
+        toast(`${who}${mods ? ` - ${mods}` : ''}`, { description: `${result}${risk}` });
+      }
     });
     return unsub;
   }, [currentRoom?.id]);
@@ -142,6 +170,12 @@ export function RollPanel() {
   const maxBonus    = Math.min(3, Math.max(0, 6 - statValue));
   const naturalPool = Math.min(statValue + bonus, 6);
   const finalPool   = divineAgony ? naturalPool + pathos : naturalPool;
+
+  async function deleteRoll(rollId) {
+    await deleteDoc(doc(db, 'rooms', currentRoom.id, 'rolls', rollId));
+    await set(rtdbRef(rtdb, `rooms/${currentRoom.id}/rollEvent`), { deleted: rollId, ts: Date.now() });
+    setRolls(prev => prev.filter(r => r.id !== rollId));
+  }
 
   async function saveRoll(rollData) {
     const ref  = await addDoc(collection(db, 'rooms', currentRoom.id, 'rolls'), rollData);
@@ -176,24 +210,10 @@ export function RollPanel() {
   }
 
   return (
-    <div className="w-80 shrink-0 border-l border-border flex flex-col overflow-y-auto">
-      <div className="p-4 flex flex-col gap-6">
+    <div className={`w-80 shrink-0 border-l border-border flex flex-col ${className}`}>
 
-        {/* Pathos */}
-        <div className="flex items-center gap-3">
-          <span className="text-xs uppercase tracking-widest text-muted-foreground w-14">Pathos</span>
-          <div className="flex gap-2">
-            {[1, 2, 3].map(i => (
-              <button key={i} type="button"
-                onClick={() => setPathos(i === pathos ? i - 1 : i)}
-                className={`w-5 h-5 border-2 transition-colors ${i <= pathos
-                  ? 'bg-primary border-primary'
-                  : 'bg-muted/20 border-muted-foreground/40 hover:border-primary/60'}`} />
-            ))}
-          </div>
-        </div>
-
-        <Separator />
+      {/* Static controls — never scrolls */}
+      <div className="p-4 flex flex-col gap-2 shrink-0">
 
         {/* Roll controls */}
         <div className="flex flex-col gap-3">
@@ -228,13 +248,24 @@ export function RollPanel() {
                 Divine agony <span className="opacity-60">(+{pathos}d)</span>
               </button>
             )}
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Button onClick={handleRoll} disabled={rolling || !username?.trim()}>
+            <Button className="ml-auto" onClick={handleRoll} disabled={rolling || !username?.trim()}>
               {rolling ? 'Rolling…' : `Roll ${finalPool === 0 ? '2d6 lowest' : `${finalPool}d6`}`}
             </Button>
-            <span className="text-xs text-muted-foreground">Success on {hard ? '6' : '4+'}</span>
+          </div>
+          <span className="text-xs text-muted-foreground">Success on {hard ? '6' : '4+'}</span>
+        </div>
+
+        {/* Pathos */}
+        <div className="flex items-center gap-3 mt-4">
+          <span className="text-xs uppercase tracking-widest text-muted-foreground w-14">Pathos</span>
+          <div className="flex gap-2">
+            {[1, 2, 3].map(i => (
+              <button key={i} type="button"
+                onClick={() => setPathos(i === pathos ? i - 1 : i)}
+                className={`w-5 h-5 border-2 transition-colors ${i <= pathos
+                  ? 'bg-primary border-primary'
+                  : 'bg-muted/20 border-muted-foreground/40 hover:border-primary/60'}`} />
+            ))}
           </div>
         </div>
 
@@ -254,17 +285,17 @@ export function RollPanel() {
             {rollingCustom ? 'Rolling…' : `Roll ${[d6Count && `${d6Count}d6`, d3Count && `${d3Count}d3`].filter(Boolean).join(' + ') || '…'}`}
           </Button>
         </div>
-
-        {/* Roll history */}
-        {rolls.length > 0 && (
-          <>
-            <p className="text-xs uppercase tracking-widest text-muted-foreground">Roll history</p>
-            <div className="flex flex-col gap-2">
-              {rolls.map(r => <RollEntry key={r.id} roll={r} />)}
-            </div>
-          </>
-        )}
       </div>
+
+      {/* Roll history — scrollable */}
+      {rolls.length > 0 && (
+        <div className="flex-1 overflow-y-auto min-h-0 px-4 pb-4 flex flex-col gap-2">
+          <p className="sticky top-0 bg-background py-2 text-xs uppercase tracking-widest text-muted-foreground">Roll history</p>
+          <div className="flex flex-col gap-2">
+            {rolls.map(r => <RollEntry key={r.id} roll={r} isAdmin={isAdmin} onDelete={() => deleteRoll(r.id)} />)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

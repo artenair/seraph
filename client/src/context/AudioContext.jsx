@@ -238,7 +238,7 @@ export function AudioProvider({ children }) {
   // ── Volume ─────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!crossfadeRef.current) {
+    if (ytReadyRef.current && !crossfadeRef.current) {
       try { getActivePlayer()?.setVolume(volume * 100); } catch {}
     }
     localStorage.setItem('audiomap-volume', volume);
