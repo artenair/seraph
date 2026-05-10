@@ -148,3 +148,87 @@ export const deleteRoomTalisman = async (roomId, talismanId) => {
   await talismanEvent(roomId, { type: 'talisman_deleted', talismanId });
 };
 
+// -- Agendas
+
+export const fetchAgendas = async (roomId) => {
+  const snap = await getDocs(collection(db, 'rooms', roomId, 'agendas'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+};
+
+export const createAgenda = async (roomId, { name, regularVoice, boldedVoice, visibleTo }, uid) => {
+  const data = { name, regularVoice, boldedVoice, visibleTo, createdAt: Date.now(), createdBy: uid };
+  const ref  = await addDoc(collection(db, 'rooms', roomId, 'agendas'), data);
+  return { id: ref.id, ...data };
+};
+
+export const updateAgenda = async (roomId, id, body) => {
+  await updateDoc(doc(db, 'rooms', roomId, 'agendas', id), body);
+};
+
+export const deleteAgenda = async (roomId, id) => {
+  await deleteDoc(doc(db, 'rooms', roomId, 'agendas', id));
+};
+
+// -- Blasphemies
+
+export const fetchBlasphemies = async (roomId) => {
+  const snap = await getDocs(collection(db, 'rooms', roomId, 'blasphemies'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+};
+
+export const createBlasphemy = async (roomId, { name, description, passiveAbility, hook, visibleTo }, uid) => {
+  const data = { name, description, passiveAbility, hook: hook ?? null, visibleTo, createdAt: Date.now(), createdBy: uid };
+  const ref  = await addDoc(collection(db, 'rooms', roomId, 'blasphemies'), data);
+  return { id: ref.id, ...data };
+};
+
+export const updateBlasphemy = async (roomId, id, body) => {
+  await updateDoc(doc(db, 'rooms', roomId, 'blasphemies', id), body);
+};
+
+export const deleteBlasphemy = async (roomId, id) => {
+  await deleteDoc(doc(db, 'rooms', roomId, 'blasphemies', id));
+};
+
+// -- Blasphemy abilities
+
+export const fetchBlasphemyAbilities = async (roomId, blasphemyId) => {
+  const snap = await getDocs(collection(db, 'rooms', roomId, 'blasphemies', blasphemyId, 'abilities'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.order - b.order);
+};
+
+export const createBlasphemyAbility = async (roomId, blasphemyId, { name, description, order }) => {
+  const data = { name, description, order };
+  const ref  = await addDoc(collection(db, 'rooms', roomId, 'blasphemies', blasphemyId, 'abilities'), data);
+  return { id: ref.id, ...data };
+};
+
+export const updateBlasphemyAbility = async (roomId, blasphemyId, id, body) => {
+  await updateDoc(doc(db, 'rooms', roomId, 'blasphemies', blasphemyId, 'abilities', id), body);
+};
+
+export const deleteBlasphemyAbility = async (roomId, blasphemyId, id) => {
+  await deleteDoc(doc(db, 'rooms', roomId, 'blasphemies', blasphemyId, 'abilities', id));
+};
+
+// -- Agenda abilities
+
+export const fetchAbilities = async (roomId, agendaId) => {
+  const snap = await getDocs(collection(db, 'rooms', roomId, 'agendas', agendaId, 'abilities'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.order - b.order);
+};
+
+export const createAbility = async (roomId, agendaId, { name, description, order }) => {
+  const data = { name, description, order };
+  const ref  = await addDoc(collection(db, 'rooms', roomId, 'agendas', agendaId, 'abilities'), data);
+  return { id: ref.id, ...data };
+};
+
+export const updateAbility = async (roomId, agendaId, id, body) => {
+  await updateDoc(doc(db, 'rooms', roomId, 'agendas', agendaId, 'abilities', id), body);
+};
+
+export const deleteAbility = async (roomId, agendaId, id) => {
+  await deleteDoc(doc(db, 'rooms', roomId, 'agendas', agendaId, 'abilities', id));
+};
+

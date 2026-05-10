@@ -19,8 +19,9 @@ import { LoginPage } from './components/LoginPage.jsx';
 import { OnboardingDialog } from './components/OnboardingDialog.jsx';
 import { RoomGate } from './components/RoomGate.jsx';
 import { RoomSettings } from './components/RoomSettings.jsx';
-import { User, Music, Bookmark, Settings, Map, Volume2, VolumeX, ListMusic, Dices, Users } from 'lucide-react';
+import { User, Music, Bookmark, Settings, Map, Volume2, VolumeX, ListMusic, Dices, Users, BookOpen } from 'lucide-react';
 import { RollPanel } from './components/RollPanel.jsx';
+import { WikiTab } from './components/WikiTab.jsx';
 import { OnlineUsers } from './components/OnlineUsers.jsx';
 import { Toaster } from 'sonner';
 
@@ -31,6 +32,7 @@ const NAV_ITEMS = [
   { id: 'music',     Icon: Music,     title: 'Music'     },
   { id: 'playlists', Icon: ListMusic, title: 'Playlists' },
   { id: 'talismans', Icon: Bookmark,  title: 'Talismans' },
+  { id: 'wiki',      Icon: BookOpen,  title: 'Wiki'      },
 ];
 
 function ActivityBarAudioButtons({ tab, setTab }) {
@@ -140,6 +142,7 @@ function MainContent({ tab }) {
       {tab === 'music'     && <MusicTab />}
       {tab === 'playlists' && <PlaylistsTab />}
       {tab === 'talismans' && <ActionTab />}
+      {tab === 'wiki'      && <WikiTab />}
     </main>
   );
 }
