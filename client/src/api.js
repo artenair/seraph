@@ -37,11 +37,18 @@ export const fetchRoomSongs = async (roomId) => {
 };
 
 async function authFetch(url, options = {}) {
-  const token = await getIdToken(auth.currentUser);
-  const r = await fetch(url, {
+  let token = await getIdToken(auth.currentUser);
+  let r = await fetch(url, {
     ...options,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...options.headers },
   });
+  if (r.status === 401) {
+    token = await getIdToken(auth.currentUser, true);
+    r = await fetch(url, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...options.headers },
+    });
+  }
   const data = await r.json();
   if (!r.ok) throw new Error(data.error ?? r.statusText);
   return data;

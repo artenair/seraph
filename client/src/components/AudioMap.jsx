@@ -118,6 +118,18 @@ function ZonePanel({ zone, color, songs, playlists, onUpdate, onUpdatePlaylist, 
   );
 }
 
+// ── Listener pin image ─────────────────────────────────────────────────────────
+
+const pinImgCache = {};
+function getPinImage(color) {
+  if (pinImgCache[color]) return pinImgCache[color];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="${color}" stroke="#0a0a0a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3" fill="#0a0a0a"/></svg>`;
+  const img = new Image();
+  img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  pinImgCache[color] = img;
+  return img;
+}
+
 // ── Canvas drawing ─────────────────────────────────────────────────────────────
 
 function drawCanvas(canvas, zones, selectedId, hoveredId, pan, zoom, size, listener, hoveredListener, activeZoneId, playlists) {
@@ -163,17 +175,17 @@ function drawCanvas(canvas, zones, selectedId, hoveredId, pan, zoom, size, liste
 
     ctx.beginPath();
     ctx.arc(zone.x, zone.y, zone.radius, 0, Math.PI * 2);
-    ctx.fillStyle = color + (isSelected ? '35' : isActive ? '30' : isHovered ? '28' : '18');
+    ctx.fillStyle = color + (isSelected ? '55' : isActive ? '48' : isHovered ? '42' : '30');
     ctx.fill();
-    ctx.strokeStyle = isSelected ? color : isActive ? color + 'dd' : isHovered ? color + 'bb' : color + '66';
+    ctx.strokeStyle = isSelected ? color : isActive ? color + 'ff' : isHovered ? color + 'dd' : color + 'aa';
     ctx.lineWidth = (isSelected || isActive ? 2 : 1) / zoom;
     ctx.setLineDash(isSelected || isActive ? [] : [4 / zoom, 3 / zoom]);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const namePx    = Math.max(11, Math.min(26, 12 * zoom)) / zoom;
-    const trackPx   = Math.max(11, Math.min(26, 10 * zoom)) / zoom;
-    ctx.fillStyle = isSelected ? '#ffffff' : isHovered ? '#cccccc' : '#888888';
+    const namePx    = Math.max(18, Math.min(36, 15 * zoom)) / zoom;
+    const trackPx   = Math.max(16, Math.min(32, 13 * zoom)) / zoom;
+    ctx.fillStyle = isSelected ? '#ffffff' : isHovered ? '#eeeeee' : '#cccccc';
     ctx.font = `${isSelected ? 600 : 400} ${namePx}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -184,7 +196,7 @@ function drawCanvas(canvas, zones, selectedId, hoveredId, pan, zoom, size, liste
       : (Array.isArray(zone.playlist) ? zone.playlist : []);
     if (playlist.length > 0) {
       ctx.font = `${trackPx}px sans-serif`;
-      ctx.fillStyle = isActive ? color : color + 'aa';
+      ctx.fillStyle = color;
       const label = isActive
         ? `♪ ${playlist.length} track${playlist.length !== 1 ? 's' : ''}`
         : `${playlist.length} track${playlist.length !== 1 ? 's' : ''}`;
@@ -200,35 +212,25 @@ function drawCanvas(canvas, zones, selectedId, hoveredId, pan, zoom, size, liste
 
   // Listener
   if (listener) {
-    const r      = 10 / zoom;
+    const size2  = 32 / zoom;
     const hov    = hoveredListener;
+    const px     = listener.x;
+    const py     = listener.y;
+    const color  = hov ? '#ffffff' : '#e2e8f0';
+    const img    = getPinImage(color);
+
     ctx.save();
     ctx.shadowColor = '#ffffff44';
-    ctx.shadowBlur  = hov ? 12 / zoom : 0;
-
-    // body arc
-    ctx.beginPath();
-    ctx.arc(listener.x, listener.y + r * 1.6, r * 1.4, Math.PI, 0);
-    ctx.fillStyle = hov ? '#e2e8f0' : '#cbd5e1';
-    ctx.fill();
-
-    // head
-    ctx.beginPath();
-    ctx.arc(listener.x, listener.y, r, 0, Math.PI * 2);
-    ctx.fillStyle = hov ? '#f8fafc' : '#e2e8f0';
-    ctx.fill();
-    ctx.strokeStyle = '#0a0a0a';
-    ctx.lineWidth = 1.5 / zoom;
-    ctx.stroke();
-
+    ctx.shadowBlur  = hov ? 14 / zoom : 4 / zoom;
+    ctx.drawImage(img, px - size2 / 2, py - size2, size2, size2);
     ctx.restore();
 
     const labelPx = Math.max(11, Math.min(26, 10 * zoom)) / zoom;
     ctx.font      = `600 ${labelPx}px sans-serif`;
     ctx.fillStyle = hov ? '#ffffff' : '#94a3b8';
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText('Listener', listener.x, listener.y + r * 3.2);
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('Listener', px, py - size2 - 2 / zoom);
   }
 
   ctx.restore(); // pop pan+zoom
@@ -382,9 +384,11 @@ export function AudioMap() {
   function hitListener(pos) {
     const l = listenerRef.current;
     if (!l) return false;
+    const size2 = 32 / zoomRef.current;
     const dx = pos.x - l.x;
     const dy = pos.y - l.y;
-    return Math.sqrt(dx * dx + dy * dy) <= 14 / zoomRef.current;
+    // cover tip at (0,0) and pin body above it
+    return dx >= -size2 / 2 && dx <= size2 / 2 && dy >= -size2 && dy <= 4 / zoomRef.current;
   }
 
   function hitHandle(pos) {

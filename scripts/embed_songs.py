@@ -155,13 +155,15 @@ def precompute_tag_embeddings(processor, model):
     inputs  = processor(text=prompts, return_tensors='pt', padding=True)
     with torch.no_grad():
         embeds = model.get_text_features(**inputs)
+        if not isinstance(embeds, torch.Tensor): embeds = embeds.pooler_output
         embeds = embeds / embeds.norm(dim=-1, keepdim=True)
     return embeds
 
 def clap_tags(audio_48k, processor, clap_model, tag_embeds):
-    inputs = processor(audios=audio_48k, sampling_rate=CLAP_SR, return_tensors='pt')
+    inputs = processor(audio=audio_48k, sampling_rate=CLAP_SR, return_tensors='pt')
     with torch.no_grad():
         audio_embed = clap_model.get_audio_features(**inputs)
+        if not isinstance(audio_embed, torch.Tensor): audio_embed = audio_embed.pooler_output
         audio_embed = audio_embed / audio_embed.norm(dim=-1, keepdim=True)
 
     scores = (audio_embed @ tag_embeds.T).squeeze().numpy()

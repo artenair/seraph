@@ -1,5 +1,8 @@
 #!/usr/bin/env node
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+dotenv.config({ path: join(dirname(fileURLToPath(import.meta.url)), '.env') });
 import { createServer } from 'http';
 import express from 'express';
 import cors from 'cors';
@@ -13,7 +16,7 @@ const credential = process.env.FIREBASE_SERVICE_ACCOUNT
   ? admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))
   : admin.credential.applicationDefault();
 
-admin.initializeApp({ credential, databaseURL: process.env.FIREBASE_DATABASE_URL });
+admin.initializeApp({ credential, databaseURL: process.env.FIREBASE_DATABASE_URL, projectId: process.env.FIREBASE_PROJECT_ID });
 
 // -- YouTube helpers
 
@@ -127,8 +130,12 @@ async function importPlaylistToFirestore(roomId, playlistId, canManageMusic) {
   let done    = 0;
   await rtDb.ref(`rooms/${roomId}/importProgress`).set({ playlistTitle, done, total, complete: false, ts: Date.now() });
 
+  const existingSnap = await fsDb.collection(`rooms/${roomId}/songs`).get();
+  const existingUrls = new Set(existingSnap.docs.map(d => d.data().youtube_url));
+
   for (const { videoId, title: ytTitle, channelTitle, thumbnail: ytThumb } of items) {
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    if (existingUrls.has(videoUrl)) { done++; continue; }
     try {
       const [meta, tags] = await Promise.all([
         fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(videoUrl)}&format=json`)
@@ -184,10 +191,14 @@ app.post('/api/rooms/:roomId/songs', async (req, res) => {
   }
 
   const ytId = extractYtId(url.trim());
+  const canonicalUrl = ytId ? `https://www.youtube.com/watch?v=${ytId}` : url.trim();
+  const existing = await admin.firestore().collection(`rooms/${roomId}/songs`)
+    .where('youtube_url', '==', canonicalUrl).limit(1).get();
+  if (!existing.empty) return res.status(409).json({ error: 'song already in library' });
   let meta, tags;
   try {
     [meta, tags] = await Promise.all([
-      fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url.trim())}&format=json`).then(r => {
+      fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(canonicalUrl)}&format=json`).then(r => {
         if (!r.ok) throw new Error('could not fetch video info');
         return r.json();
       }),
@@ -200,7 +211,7 @@ app.post('/api/rooms/:roomId/songs', async (req, res) => {
   const songData = {
     title:       meta.title         ?? 'Unknown',
     artist:      meta.author_name   ?? '',
-    youtube_url: url.trim(),
+    youtube_url: canonicalUrl,
     tags:        JSON.stringify(tags),
     status:      canManageMusic ? 'done' : 'pending',
     thumbnail:   meta.thumbnail_url ?? '',

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { inputBase, extractYtId, extractYtPlaylistId } from '../lib/utils.js';
 import { useRoom } from '../context/RoomContext.jsx';
 import { fetchRoomSongs, addRoomSong, approveRoomSong, updateRoomSong, deleteRoomSong } from '../api.js';
@@ -33,7 +33,7 @@ function Toast({ message, onDone }) {
 function AddSongCard({ onClick, isAdmin }) {
   return (
     <div
-      className="relative aspect-square overflow-hidden border border-dashed border-border group cursor-pointer hover:border-foreground/40 transition-colors"
+      className="relative aspect-[4/3] overflow-hidden border border-dashed border-border group cursor-pointer hover:border-foreground/40 transition-colors"
       onClick={onClick}
     >
       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground group-hover:text-foreground transition-colors">
@@ -116,7 +116,7 @@ function AddSongModal({ open, onClose, onToast, isAdmin }) {
   );
 }
 
-function SongCard({ song, allSongs, onUpdated, onDeleted }) {
+const SongCard = memo(function SongCard({ song, onUpdated, onDeleted }) {
   const { play } = usePersonalAudio();
   const { currentRoom } = useRoom();
   const [editing,  setEditing]  = useState(false);
@@ -155,11 +155,11 @@ function SongCard({ song, allSongs, onUpdated, onDeleted }) {
 
   return (
     <div
-      className="relative aspect-square overflow-hidden border border-border group cursor-pointer"
+      className="relative aspect-[4/3] overflow-hidden border border-border group cursor-pointer"
       onClick={() => !editing && play(song)}
     >
       {img
-        ? <img src={img} alt="" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+        ? <img src={img} alt="" loading="lazy" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
         : <div className="absolute inset-0 bg-muted" />
       }
       <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
@@ -208,18 +208,18 @@ function SongCard({ song, allSongs, onUpdated, onDeleted }) {
       )}
     </div>
   );
-}
+});
 
-function RemoteSongCard({ song }) {
+const RemoteSongCard = memo(function RemoteSongCard({ song }) {
   const { play } = usePersonalAudio();
   const img = thumb(song);
   return (
     <div
-      className="relative aspect-square overflow-hidden border border-border group cursor-pointer"
+      className="relative aspect-[4/3] overflow-hidden border border-border group cursor-pointer"
       onClick={() => play(song)}
     >
       {img
-        ? <img src={img} alt="" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+        ? <img src={img} alt="" loading="lazy" className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
         : <div className="absolute inset-0 bg-muted" />
       }
       <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
@@ -229,9 +229,9 @@ function RemoteSongCard({ song }) {
       </div>
     </div>
   );
-}
+});
 
-function PendingCard({ song, onApproved, onRejected }) {
+const PendingCard = memo(function PendingCard({ song, onApproved, onRejected }) {
   const { play } = usePersonalAudio();
   const { currentRoom } = useRoom();
   const [approving, setApproving] = useState(false);
@@ -255,7 +255,7 @@ function PendingCard({ song, onApproved, onRejected }) {
 
   return (
     <div
-      className="relative aspect-square overflow-hidden border border-dashed border-border group cursor-pointer opacity-80"
+      className="relative aspect-[4/3] overflow-hidden border border-dashed border-border group cursor-pointer opacity-80"
       onClick={() => play(song)}
     >
       {img
@@ -295,18 +295,24 @@ function PendingCard({ song, onApproved, onRejected }) {
       </div>
     </div>
   );
-}
+});
 
 export function MusicTab() {
   const { isAdmin, isDJ, currentRoom } = useRoom();
   const canManageMusic = isAdmin || isDJ;
   const [songs,       setSongs]       = useState([]);
-  const [modalOpen,   setModalOpen]   = useState(false);
+  const [modalOpen,     setModalOpen]     = useState(false);
+  const [jumpOpen,      setJumpOpen]      = useState(false);
+  const [jumpInput,     setJumpInput]     = useState('');
   const [pendingOpen, setPendingOpen] = useState(true);
   const [search,      setSearch]      = useState('');
   const [tagFilter,   setTagFilter]   = useState('');
+  const [page,        setPage]        = useState(1);
+  const [sort,        setSort]        = useState('az');
   const [toast,       setToast]       = useState(null);
   const clearToast = useRef(() => setToast(null)).current;
+  const PAGE_SIZE = 34;
+  useEffect(() => setPage(1), [search, tagFilter, sort]);
 
   // Initial load from Firestore
   useEffect(() => {
@@ -338,24 +344,33 @@ export function MusicTab() {
     return unsub;
   }, [currentRoom?.id, isAdmin]);
 
-  const pending  = songs.filter(s => s.status === 'pending');
-  const approved = songs.filter(s => s.status !== 'pending');
+  const pending  = useMemo(() => songs.filter(s => s.status === 'pending'),  [songs]);
+  const approved = useMemo(() => songs.filter(s => s.status !== 'pending'), [songs]);
 
-  const allTags  = [...new Set(approved.flatMap(s => Array.isArray(s.tags) ? s.tags : []))].sort();
-  const filtered = approved.filter(s => {
+  const handleUpdated = useCallback(updated => setSongs(prev => prev.map(s => s.id === updated.id ? updated : s)), []);
+  const handleDeleted = useCallback(id      => setSongs(prev => prev.filter(s => s.id !== id)), []);
+
+  const allTags  = useMemo(() => [...new Set(approved.flatMap(s => Array.isArray(s.tags) ? s.tags : []))].sort(), [approved]);
+  const filtered = useMemo(() => approved.filter(s => {
     if (search) {
       const q = search.toLowerCase();
       if (!s.title.toLowerCase().includes(q) && !s.artist.toLowerCase().includes(q)) return false;
     }
     if (tagFilter && !(Array.isArray(s.tags) ? s.tags : []).includes(tagFilter)) return false;
     return true;
-  });
+  }), [approved, search, tagFilter]);
+  const sorted = useMemo(() => [...filtered].sort((a, b) => {
+    const cmp = a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+    return sort === 'az' ? cmp : -cmp;
+  }), [filtered, sort]);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const visible    = useMemo(() => sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [sorted, page]);
 
   return (
     <div className="flex flex-col gap-4">
 
       {/* Search / filter */}
-      <div className="flex gap-2 max-w-xl">
+      <div className="flex gap-2 max-w-xl items-center">
         <input
           className={input + ' flex-1'}
           value={search}
@@ -368,6 +383,10 @@ export function MusicTab() {
             {allTags.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         )}
+        <select className={`${input} w-auto`} value={sort} onChange={e => setSort(e.target.value)}>
+          <option value="az">A → Z</option>
+          <option value="za">Z → A</option>
+        </select>
       </div>
 
       {/* Pending queue — local only, collapsible */}
@@ -401,18 +420,97 @@ export function MusicTab() {
       {/* Song grid */}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
         <AddSongCard onClick={() => setModalOpen(true)} isAdmin={canManageMusic} />
-        {filtered.map(song => (
+        {visible.map(song => (
           canManageMusic
             ? <SongCard
                 key={song.id}
                 song={song}
-                allSongs={filtered}
-                onUpdated={updated => setSongs(prev => prev.map(s => s.id === updated.id ? updated : s))}
-                onDeleted={id => setSongs(prev => prev.filter(s => s.id !== id))}
+                onUpdated={handleUpdated}
+                onDeleted={handleDeleted}
               />
             : <RemoteSongCard key={song.id} song={song} />
         ))}
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center gap-1.5 mx-auto">
+          <button
+            onClick={() => setPage(p => p - 1)}
+            disabled={page === 1}
+            className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30"
+          >
+            ←
+          </button>
+          {(() => {
+            let start = page - 3;
+            let end   = page + 2;
+            if (start < 1)            { end   += (1 - start);             start = 1; }
+            if (end > totalPages)     { start -= (end - totalPages);       end = totalPages; }
+            if (start === 1)            end   = Math.min(totalPages, Math.max(end, 8));
+            if (end >= totalPages - 1) { end   = totalPages; start = Math.max(1, Math.min(start, totalPages - 7)); }
+            start = Math.max(1, start);
+
+            const items = [];
+            if (start > 1)  items.push(1);
+            if (start > 2)  items.push('...');
+            for (let p = start; p <= end; p++) items.push(p);
+            if (end < totalPages - 1) items.push('...');
+            if (end < totalPages)     items.push(totalPages);
+
+            return items.map((p, i) =>
+              p === '...'
+                ? <button key={`ellipsis-${i}`} onClick={() => { setJumpInput(''); setJumpOpen(true); }} className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors">…</button>
+                : <button
+                    key={p}
+                    onClick={() => setPage(p)}
+                    className={`w-9 h-9 flex items-center justify-center text-sm font-medium border transition-colors ${p === page ? 'border-foreground text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'}`}
+                  >
+                    {p}
+                  </button>
+            );
+          })()}
+          <button
+            onClick={() => setPage(p => p + 1)}
+            disabled={page === totalPages}
+            className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors disabled:opacity-30"
+          >
+            →
+          </button>
+        </div>
+      )}
+
+      <Dialog open={jumpOpen} onOpenChange={v => !v && setJumpOpen(false)}>
+        <DialogContent className="sm:max-w-xs">
+          <DialogHeader>
+            <DialogTitle>Go to page</DialogTitle>
+          </DialogHeader>
+          <input
+            className={`${input} w-full`}
+            type="number"
+            min={1}
+            max={totalPages}
+            value={jumpInput}
+            onChange={e => setJumpInput(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                const p = parseInt(jumpInput);
+                if (p >= 1 && p <= totalPages) { setPage(p); setJumpOpen(false); }
+              }
+            }}
+            placeholder={`1 – ${totalPages}`}
+            autoFocus
+          />
+          <DialogFooter showCloseButton>
+            <Button size="sm" onClick={() => {
+              const p = parseInt(jumpInput);
+              if (p >= 1 && p <= totalPages) { setPage(p); setJumpOpen(false); }
+            }}>
+              Go
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AddSongModal
         open={modalOpen}
