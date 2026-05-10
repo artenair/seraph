@@ -77,7 +77,7 @@ export function PlayerBar({
   return (
     <>
       <div
-        className="fixed left-0 right-0 bg-background border-t border-border flex flex-col"
+        className="fixed left-0 md:left-12 right-0 bg-background border-t border-border flex flex-col"
         style={{ bottom: effectiveBottom, zIndex }}
       >
         <div className="hidden md:block">{drawer}</div>

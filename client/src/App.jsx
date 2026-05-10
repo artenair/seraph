@@ -19,8 +19,9 @@ import { LoginPage } from './components/LoginPage.jsx';
 import { OnboardingDialog } from './components/OnboardingDialog.jsx';
 import { RoomGate } from './components/RoomGate.jsx';
 import { RoomSettings } from './components/RoomSettings.jsx';
-import { User, Music, Bookmark, Settings, Map, Volume2, VolumeX, ListMusic, Dices } from 'lucide-react';
+import { User, Music, Bookmark, Settings, Map, Volume2, VolumeX, ListMusic, Dices, Users } from 'lucide-react';
 import { RollPanel } from './components/RollPanel.jsx';
+import { OnlineUsers } from './components/OnlineUsers.jsx';
 import { Toaster } from 'sonner';
 
 const input = inputBase;
@@ -150,6 +151,9 @@ function AppContent() {
   const [settingsOpen,   setSettingsOpen]   = useState(false);
   const [newRoomOpen,    setNewRoomOpen]    = useState(false);
   const [rollDrawerOpen, setRollDrawerOpen] = useState(false);
+  const [onlineOpen,     setOnlineOpen]     = useState(() => {
+    try { return JSON.parse(localStorage.getItem('seraph:online-users-panel'))?.open ?? false; } catch { return false; }
+  });
 
   useEffect(() => {
     if (!roomsLoaded) return;
@@ -185,6 +189,16 @@ function AppContent() {
         <ActivityBarAudioButtons tab={tab} setTab={setTab} />
 
         <div className="mt-auto flex flex-col items-center gap-1 pb-2">
+          <button
+            onClick={() => setOnlineOpen(v => {
+              const next = !v;
+              try { const s = JSON.parse(localStorage.getItem('seraph:online-users-panel')) ?? {}; localStorage.setItem('seraph:online-users-panel', JSON.stringify({ ...s, open: next })); } catch {}
+              return next;
+            })}
+            title="Online users"
+            className={`w-full flex items-center justify-center py-3 transition-colors ${onlineOpen ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+            <Users size={20} />
+          </button>
           <button
             onClick={() => setSettingsOpen(true)}
             title="Room settings"
@@ -255,6 +269,10 @@ function AppContent() {
     </Sheet>
 
     <RoomSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+    {onlineOpen && <OnlineUsers onClose={() => {
+      setOnlineOpen(false);
+      try { const s = JSON.parse(localStorage.getItem('seraph:online-users-panel')) ?? {}; localStorage.setItem('seraph:online-users-panel', JSON.stringify({ ...s, open: false })); } catch {}
+    }} />}
     <Dialog open={newRoomOpen} onOpenChange={v => !v && setNewRoomOpen(false)}>
       <DialogContent className="sm:max-w-sm" showCloseButton={false}>
         <RoomGate embedded onDone={() => setNewRoomOpen(false)} />
