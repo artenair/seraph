@@ -1,4 +1,4 @@
-import { collection, getDocs, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, updateDoc, deleteDoc, addDoc, getDoc } from 'firebase/firestore';
 import { ref as rtdbRef, set } from 'firebase/database';
 import { getIdToken } from 'firebase/auth';
 import { db, rtdb, auth } from './lib/firebase.js';
@@ -11,14 +11,14 @@ export const fetchRoomZones = async (roomId) => {
 };
 
 export const createRoomZone = async (roomId, body) => {
-  const { addDoc } = await import('firebase/firestore');
+
   const data = { name: body.name ?? 'Zone', x: body.x ?? 0, y: body.y ?? 0, radius: body.radius ?? 60, playlist: [] };
   const ref  = await addDoc(collection(db, 'rooms', roomId, 'audioZones'), data);
   return { id: ref.id, ...data };
 };
 
 export const updateRoomZone = async (roomId, id, body) => {
-  const { getDoc } = await import('firebase/firestore');
+
   const zoneRef = doc(db, 'rooms', roomId, 'audioZones', id);
   await updateDoc(zoneRef, body);
   const snap = await getDoc(zoneRef);
@@ -90,14 +90,14 @@ export const fetchRoomPlaylists = async (roomId) => {
 };
 
 export const createRoomPlaylist = async (roomId, { name }) => {
-  const { addDoc } = await import('firebase/firestore');
+
   const data = { name: name ?? 'New Playlist', songs: [] };
   const ref  = await addDoc(collection(db, 'rooms', roomId, 'playlists'), data);
   return { id: ref.id, ...data };
 };
 
 export const updateRoomPlaylist = async (roomId, id, body) => {
-  const { getDoc } = await import('firebase/firestore');
+
   const ref = doc(db, 'rooms', roomId, 'playlists', id);
   await updateDoc(ref, body);
   const snap = await getDoc(ref);
@@ -120,7 +120,7 @@ function talismanEvent(roomId, payload) {
 }
 
 export const createRoomTalisman = async (roomId, { name, totalSlashes, hidden, pinned, ownerId }) => {
-  const { addDoc } = await import('firebase/firestore');
+
   const data     = { name, slashes: 0, total_slashes: totalSlashes, hidden: !!hidden, pinned: !!pinned, ownerId: ownerId ?? null, createdAt: Date.now() };
   const ref      = await addDoc(collection(db, 'rooms', roomId, 'talismans'), data);
   const talisman = { id: ref.id, ...data };
