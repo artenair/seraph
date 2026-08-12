@@ -166,8 +166,13 @@ export function TalismanPanel({ talismans }) {
     return getLocalStorage('talisman-order', []);
   });
   const dragId = useRef(null);
+  const [draggingId, setDraggingId] = useState(null);
 
   useEffect(() => {
+    // talismans starts as [] on every mount until the async fetch resolves; merging
+    // against that empty snapshot would wipe the persisted order (and a legitimately
+    // empty room is harmless to skip too, since nothing renders until one exists again).
+    if (talismans.length === 0) return;
     setOrderedIds(prev => {
       const incoming = talismans.map(t => t.id);
       const kept     = prev.filter(id => incoming.includes(id));
@@ -193,11 +198,13 @@ export function TalismanPanel({ talismans }) {
     const from = dragId.current;
     if (!from || from === targetId) return;
     setOrderedIds(prev => {
+      const fi = prev.indexOf(from);
+      const ti = prev.indexOf(targetId);
+      if (fi === -1 || ti === -1) return prev;
       const next = [...prev];
-      const fi = next.indexOf(from);
-      const ti = next.indexOf(targetId);
       next.splice(fi, 1);
-      next.splice(ti, 0, from);
+      // ti was computed pre-removal, so shift it if `from` sat before the target.
+      next.splice(fi < ti ? ti - 1 : ti, 0, from);
       return next;
     });
   }
@@ -336,9 +343,9 @@ export function TalismanPanel({ talismans }) {
             canEdit={isAdmin || t.ownerId === user?.uid}
             members={members}
             memberMap={memberMap}
-            dragging={dragId.current === t.id}
-            onDragStart={() => { dragId.current = t.id; }}
-            onDragEnd={() => { dragId.current = null; }}
+            dragging={draggingId === t.id}
+            onDragStart={e => { e.dataTransfer.setData('text/plain', t.id); dragId.current = t.id; setDraggingId(t.id); }}
+            onDragEnd={() => { dragId.current = null; setDraggingId(null); }}
             onDragOver={() => { if (dragId.current && dragId.current !== t.id) handleDrop(t.id); }}
             onDrop={() => handleDrop(t.id)}
             onSetSlashes={slashes => handleSetSlashes(t.id, slashes)}
